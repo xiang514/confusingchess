@@ -12,7 +12,11 @@ const {
   PIECE_NAMES,
   createInitialGame,
   applyMove,
+  applyHorseMount,
   getLegalMovesForPiece,
+  getDongfengTargets,
+  getHorseMountOptions,
+  canUseDongfeng,
   cloneGame,
   getCellLabel,
 } = Core;
@@ -45,6 +49,8 @@ const elements = {
   moveCount: document.getElementById("moveCount"),
   resetBtn: document.getElementById("resetBtn"),
   undoBtn: document.getElementById("undoBtn"),
+  dongfengBtn: document.getElementById("dongfengBtn"),
+  mountBtn: document.getElementById("mountBtn"),
   connectForm: document.getElementById("connectForm"),
   signupBtn: document.getElementById("signupBtn"),
   nameInput: document.getElementById("nameInput"),
@@ -62,6 +68,7 @@ const state = {
   game: createInitialGame(),
   selected: null,
   legalTargets: [],
+  specialMode: null,
   history: [],
   notice: "",
   connection: {
@@ -105,6 +112,8 @@ function bindEvents() {
   elements.signupBtn.addEventListener("click", registerAccount);
   elements.disconnectBtn.addEventListener("click", disconnectOnline);
   elements.copyLinkBtn.addEventListener("click", copyInviteLink);
+  elements.dongfengBtn.addEventListener("click", toggleDongfengMode);
+  elements.mountBtn.addEventListener("click", toggleMountMode);
   elements.resetBtn.addEventListener("click", resetGame);
   elements.undoBtn.addEventListener("click", undoMove);
   window.addEventListener("resize", drawBoard);
@@ -230,7 +239,7 @@ function renderBoardGrid() {
 
       if (piece) {
         const pieceEl = document.createElement("span");
-        pieceEl.className = `piece ${piece.side}`;
+        pieceEl.className = `piece ${piece.side}${piece.type === "mountedKing" ? " mounted" : ""}`;
         pieceEl.textContent = SYMBOLS[piece.side][piece.type];
         pieceEl.title = `${SIDES[piece.side].label}${PIECE_NAMES[piece.type]}`;
         cell.appendChild(pieceEl);
@@ -284,6 +293,16 @@ function renderPanels() {
   elements.undoBtn.disabled = state.connection.connected
     ? !state.connection.canUndo || state.connection.busy
     : state.history.length === 0;
+
+  const actorSide = getActorSide();
+  const canAct = canCurrentUserAct();
+  const dongfengAvailable = canAct && actorSide && hasDongfengTarget(actorSide);
+  const mountAvailable = canAct && actorSide && getHorseMountOptions(game, actorSide).length > 0;
+
+  elements.dongfengBtn.disabled = !dongfengAvailable;
+  elements.dongfengBtn.classList.toggle("active", state.specialMode === "dongfeng");
+  elements.mountBtn.disabled = !mountAvailable;
+  elements.mountBtn.classList.toggle("active", state.specialMode === "mount");
 }
 
 function renderPlayerLabel(side) {
@@ -348,6 +367,18 @@ function handleCellClick(row, col) {
   }
 
   const piece = game.board[row][col];
+  if (state.specialMode === "mount") {
+    const target = state.legalTargets.find((move) => move.row === row && move.col === col);
+    if (target) {
+      requestMount(target);
+      return;
+    }
+
+    state.notice = "请选择高亮的马来翻身上马";
+    renderPanels();
+    return;
+  }
+
   if (state.selected) {
     const target = state.legalTargets.find((move) => move.row === row && move.col === col);
     if (target) {
@@ -385,6 +416,23 @@ function canControlPiece(piece) {
 
 function selectPiece(row, col) {
   const piece = state.game.board[row][col];
+  if (state.specialMode === "dongfeng") {
+    if (piece.type !== "cannon") {
+      state.notice = "请选择本方的一枚炮发动东风炮";
+      renderPanels();
+      return;
+    }
+
+    const moves = getDongfengTargets(state.game, row, col);
+    state.selected = { row, col };
+    state.legalTargets = moves;
+    state.notice = moves.length
+      ? `东风炮选择 ${SYMBOLS[piece.side][piece.type]}`
+      : "这枚炮当前没有东风炮目标";
+    render();
+    return;
+  }
+
   const moves = getLegalMovesForPiece(state.game.board, row, col);
   state.selected = { row, col };
   state.legalTargets = moves;
@@ -397,10 +445,13 @@ function selectPiece(row, col) {
 function clearSelection() {
   state.selected = null;
   state.legalTargets = [];
+  state.specialMode = null;
   state.notice = "";
 }
 
 async function requestMove(from, to) {
+  const moveOptions = state.specialMode === "dongfeng" ? { mode: "dongfeng" } : {};
+
   if (state.connection.connected) {
     if (!state.connection.roomUuid || !state.connection.side) {
       state.notice = "尚未进入房间";
@@ -415,7 +466,7 @@ async function requestMove(from, to) {
     }
 
     const previousGame = cloneGame(state.game);
-    const result = applyMove(state.game, from, to);
+    const result = applyMove(state.game, from, to, moveOptions);
     if (!result.ok) {
       state.notice = result.error;
       render();
@@ -428,7 +479,7 @@ async function requestMove(from, to) {
   }
 
   state.history.push(cloneGame(state.game));
-  const result = applyMove(state.game, from, to);
+  const result = applyMove(state.game, from, to, moveOptions);
   if (result.ok) {
     state.game = result.game;
     clearSelection();
@@ -437,6 +488,144 @@ async function requestMove(from, to) {
     state.notice = result.error;
   }
   render();
+}
+
+async function requestMount(horsePoint) {
+  if (state.connection.connected) {
+    if (!state.connection.roomUuid || !state.connection.side) {
+      state.notice = "尚未进入房间";
+      renderPanels();
+      return;
+    }
+
+    if (state.game.currentSide !== state.connection.side) {
+      state.notice = "还没轮到你";
+      renderPanels();
+      return;
+    }
+
+    const previousGame = cloneGame(state.game);
+    const result = applyHorseMount(state.game, horsePoint);
+    if (!result.ok) {
+      state.notice = result.error;
+      render();
+      return;
+    }
+
+    clearSelection();
+    await saveRoomState(result.game, [...state.history, previousGame], "正在同步翻身上马");
+    return;
+  }
+
+  state.history.push(cloneGame(state.game));
+  const result = applyHorseMount(state.game, horsePoint);
+  if (result.ok) {
+    state.game = result.game;
+    clearSelection();
+  } else {
+    state.history.pop();
+    state.notice = result.error;
+  }
+  render();
+}
+
+function toggleDongfengMode() {
+  if (!canCurrentUserAct()) {
+    state.notice = state.connection.connected ? "还没轮到你" : "现在不能走棋";
+    renderPanels();
+    return;
+  }
+
+  const side = getActorSide();
+  if (!side || !canUseDongfeng(state.game, side)) {
+    state.notice = "本方本局已经使用过东风炮";
+    renderPanels();
+    return;
+  }
+
+  if (!hasDongfengTarget(side)) {
+    state.notice = "当前没有可用的东风炮目标";
+    renderPanels();
+    return;
+  }
+
+  if (state.specialMode === "dongfeng") {
+    clearSelection();
+    render();
+    return;
+  }
+
+  state.specialMode = "dongfeng";
+  state.selected = null;
+  state.legalTargets = [];
+  state.notice = "请选择一枚本方炮发动东风炮";
+  render();
+}
+
+function toggleMountMode() {
+  if (!canCurrentUserAct()) {
+    state.notice = state.connection.connected ? "还没轮到你" : "现在不能走棋";
+    renderPanels();
+    return;
+  }
+
+  const side = getActorSide();
+  const options = side ? getHorseMountOptions(state.game, side) : [];
+  if (!options.length) {
+    state.notice = "只有被将军，且本方马能一步走到将帅位置时，才能翻身上马";
+    renderPanels();
+    return;
+  }
+
+  if (state.specialMode === "mount") {
+    clearSelection();
+    render();
+    return;
+  }
+
+  state.specialMode = "mount";
+  state.selected = null;
+  state.legalTargets = options.map((option) => ({ ...option, capture: false }));
+  state.notice = "请选择高亮的马来翻身上马";
+  render();
+}
+
+function getActorSide() {
+  return state.connection.connected ? state.connection.side : state.game.currentSide;
+}
+
+function canCurrentUserAct() {
+  if (state.game.gameOver || state.connection.busy) {
+    return false;
+  }
+
+  if (!state.connection.connected) {
+    return true;
+  }
+
+  return Boolean(state.connection.side && state.game.currentSide === state.connection.side);
+}
+
+function hasDongfengTarget(side) {
+  if (!canUseDongfeng(state.game, side)) {
+    return false;
+  }
+
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      const piece = state.game.board[row][col];
+      if (
+        piece &&
+        piece.side === side &&
+        piece.type === "cannon" &&
+        getDongfengTargets(state.game, row, col).length > 0
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 async function undoMove() {
@@ -732,13 +921,21 @@ function applyRemoteRoom(room) {
   state.connection.canUndo = state.history.length > 0;
   state.selected = null;
   state.legalTargets = [];
+  state.specialMode = null;
   state.notice = "";
   render();
 }
 
 function normalizeGame(value) {
   if (value && Array.isArray(value.board) && value.board.length === ROWS) {
-    return value;
+    const base = createInitialGame();
+    return cloneGame({
+      ...base,
+      ...value,
+      captured: value.captured || base.captured,
+      moveLog: value.moveLog || base.moveLog,
+      specials: value.specials || base.specials,
+    });
   }
   return createInitialGame();
 }

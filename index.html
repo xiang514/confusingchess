@@ -3,17 +3,25 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>中国象棋双人对弈</title>
+    <title>Confusing Chess</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main class="app-shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">线上双人对弈</p>
-          <h1>中国象棋</h1>
+          <p class="eyebrow">魔改象棋 · 线上双人对弈</p>
+          <h1>Confusing Chess</h1>
         </div>
         <div class="actions" aria-label="对局操作">
+          <button id="dongfengBtn" class="tool-button special" type="button" title="东风炮" aria-label="东风炮">
+            <span aria-hidden="true">炮</span>
+            <span>东风炮</span>
+          </button>
+          <button id="mountBtn" class="tool-button special" type="button" title="翻身上马" aria-label="翻身上马">
+            <span aria-hidden="true">马</span>
+            <span>翻身上马</span>
+          </button>
           <button id="undoBtn" class="tool-button" type="button" title="悔棋" aria-label="悔棋">
             <span aria-hidden="true">↶</span>
             <span>悔棋</span>
