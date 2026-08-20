@@ -1,13 +1,118 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Confusing Chess</title>
-</head>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>中国象棋双人对弈</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">线上双人对弈</p>
+          <h1>中国象棋</h1>
+        </div>
+        <div class="actions" aria-label="对局操作">
+          <button id="undoBtn" class="tool-button" type="button" title="悔棋" aria-label="悔棋">
+            <span aria-hidden="true">↶</span>
+            <span>悔棋</span>
+          </button>
+          <button id="resetBtn" class="tool-button primary" type="button" title="重新开始" aria-label="重新开始">
+            <span aria-hidden="true">↻</span>
+            <span>重新开始</span>
+          </button>
+        </div>
+      </header>
 
-<body>
-  <h1>Confusing Chess</h1>
-  <p>Welcome to confusingchess.fun ♟️</p>
-</body>
+      <section class="connect-panel" aria-label="连接房间">
+        <form id="connectForm" class="connect-form">
+          <label>
+            <span>昵称</span>
+            <input id="nameInput" name="name" type="text" autocomplete="nickname" maxlength="16" placeholder="我" />
+          </label>
+          <label>
+            <span>房间</span>
+            <input id="roomInput" name="room" type="text" autocomplete="off" maxlength="32" placeholder="home" />
+          </label>
+          <label>
+            <span>私人口令</span>
+            <input id="accessKeyInput" name="accessKey" type="password" autocomplete="current-password" />
+          </label>
+          <button id="connectBtn" class="tool-button primary" type="submit" title="连接" aria-label="连接">
+            <span aria-hidden="true">⛓</span>
+            <span>连接</span>
+          </button>
+          <button id="disconnectBtn" class="tool-button" type="button" title="断开" aria-label="断开" disabled>
+            <span aria-hidden="true">⏏</span>
+            <span>断开</span>
+          </button>
+          <button id="copyLinkBtn" class="tool-button" type="button" title="复制房间链接" aria-label="复制房间链接">
+            <span aria-hidden="true">⧉</span>
+            <span>复制链接</span>
+          </button>
+        </form>
+        <div class="connection-state">
+          <span id="connectionBadge" class="connection-badge offline">未连接</span>
+          <span id="seatInfo">home · 本机对弈</span>
+        </div>
+      </section>
+
+      <section class="game-layout" aria-label="中国象棋棋局">
+        <div class="board-area">
+          <div class="players" aria-label="双方状态">
+            <div id="redPlayer" class="player red-player">
+              <span class="side-dot red-dot" aria-hidden="true"></span>
+              <span>
+                <strong id="redName">玩家1</strong>
+                <small id="redMeta">红方</small>
+              </span>
+            </div>
+            <div id="blackPlayer" class="player black-player">
+              <span class="side-dot black-dot" aria-hidden="true"></span>
+              <span>
+                <strong id="blackName">玩家2</strong>
+                <small id="blackMeta">黑方</small>
+              </span>
+            </div>
+          </div>
+
+          <div id="board" class="board" role="application" aria-label="中国象棋棋盘">
+            <canvas id="boardCanvas" aria-hidden="true"></canvas>
+            <div id="boardGrid" class="board-grid"></div>
+          </div>
+        </div>
+
+        <aside class="side-panel" aria-label="对局信息">
+          <section class="status-panel">
+            <p class="panel-label">当前回合</p>
+            <h2 id="turnTitle">玩家1 · 红方</h2>
+            <p id="gameStatus" class="game-status">红方先行</p>
+          </section>
+
+          <section class="capture-panel">
+            <div>
+              <p class="panel-label">玩家1吃子</p>
+              <div id="redCaptured" class="captured-line" aria-live="polite"></div>
+            </div>
+            <div>
+              <p class="panel-label">玩家2吃子</p>
+              <div id="blackCaptured" class="captured-line" aria-live="polite"></div>
+            </div>
+          </section>
+
+          <section class="log-panel">
+            <div class="panel-heading">
+              <p class="panel-label">棋谱</p>
+              <span id="moveCount" class="move-count">0 手</span>
+            </div>
+            <ol id="moveLog" class="move-log" aria-live="polite"></ol>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <script src="xiangqi-core.js"></script>
+    <script src="script.js"></script>
+  </body>
 </html>
