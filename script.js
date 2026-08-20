@@ -1,5 +1,8 @@
 "use strict";
 
+const SUPABASE_URL = "https://ikuqyslgfbabixyitzws.supabase.co";
+const SUPABASE_KEY = "sb_publishable_6SYKOcW0fzIKUEMomMJ5iw_NtVm-GaY";
+
 const Core = window.XiangqiCore;
 const {
   ROWS,
@@ -14,11 +17,14 @@ const {
   getCellLabel,
 } = Core;
 
+const supabaseClient = window.supabase
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
+  : null;
+
 const STORAGE_KEYS = {
   roomId: "xiangqi.roomId",
   name: "xiangqi.name",
-  accessKey: "xiangqi.accessKey",
-  sessionId: "xiangqi.sessionId",
+  email: "xiangqi.email",
 };
 
 const elements = {
@@ -40,9 +46,11 @@ const elements = {
   resetBtn: document.getElementById("resetBtn"),
   undoBtn: document.getElementById("undoBtn"),
   connectForm: document.getElementById("connectForm"),
+  signupBtn: document.getElementById("signupBtn"),
   nameInput: document.getElementById("nameInput"),
+  emailInput: document.getElementById("emailInput"),
+  passwordInput: document.getElementById("passwordInput"),
   roomInput: document.getElementById("roomInput"),
-  accessKeyInput: document.getElementById("accessKeyInput"),
   connectBtn: document.getElementById("connectBtn"),
   disconnectBtn: document.getElementById("disconnectBtn"),
   copyLinkBtn: document.getElementById("copyLinkBtn"),
@@ -57,9 +65,12 @@ const state = {
   history: [],
   notice: "",
   connection: {
-    ws: null,
+    channel: null,
     connected: false,
+    busy: false,
     roomId: "",
+    roomUuid: null,
+    userId: null,
     side: null,
     revision: 0,
     canUndo: false,
@@ -74,29 +85,43 @@ const state = {
 
 initConnectionForm();
 bindEvents();
+restoreSession();
 render();
 
 function initConnectionForm() {
   const params = new URLSearchParams(window.location.search);
   const roomId = params.get("room") || localStorage.getItem(STORAGE_KEYS.roomId) || "home";
   const name = localStorage.getItem(STORAGE_KEYS.name) || "";
-  const accessKey = localStorage.getItem(STORAGE_KEYS.accessKey) || "";
-  const sessionId = localStorage.getItem(STORAGE_KEYS.sessionId) || createSessionId();
+  const email = localStorage.getItem(STORAGE_KEYS.email) || "";
 
-  localStorage.setItem(STORAGE_KEYS.sessionId, sessionId);
   elements.roomInput.value = roomId;
   elements.nameInput.value = name;
-  elements.accessKeyInput.value = accessKey;
+  elements.emailInput.value = email;
   state.connection.roomId = roomId;
 }
 
 function bindEvents() {
   elements.connectForm.addEventListener("submit", connectOnline);
+  elements.signupBtn.addEventListener("click", registerAccount);
   elements.disconnectBtn.addEventListener("click", disconnectOnline);
   elements.copyLinkBtn.addEventListener("click", copyInviteLink);
   elements.resetBtn.addEventListener("click", resetGame);
   elements.undoBtn.addEventListener("click", undoMove);
   window.addEventListener("resize", drawBoard);
+}
+
+async function restoreSession() {
+  if (!supabaseClient) {
+    setConnectionStatus("联机组件未加载", "error");
+    return;
+  }
+
+  const { data } = await supabaseClient.auth.getSession();
+  const user = data.session && data.session.user;
+  if (user) {
+    state.connection.userId = user.id;
+    setConnectionStatus("已登录", "pending");
+  }
 }
 
 function render() {
@@ -257,7 +282,7 @@ function renderPanels() {
   });
 
   elements.undoBtn.disabled = state.connection.connected
-    ? !state.connection.canUndo
+    ? !state.connection.canUndo || state.connection.busy
     : state.history.length === 0;
 }
 
@@ -269,7 +294,7 @@ function renderPlayerLabel(side) {
   const bits = [SIDES[side].label];
 
   if (state.connection.connected) {
-    bits.push(player.connected ? "在线" : "离线");
+    bits.push(player.connected ? "已加入" : "空位");
     if (state.connection.side === side) {
       bits.push("你");
     }
@@ -284,13 +309,17 @@ function renderConnectionPanel() {
   elements.connectionBadge.textContent = connection.status;
   elements.connectionBadge.className = `connection-badge ${connection.statusKind}`;
 
-  const seatText = connection.connected && connection.side
-    ? `${connection.roomId} · 你执${SIDES[connection.side].label}`
-    : `${elements.roomInput.value.trim() || "home"} · 本机对弈`;
+  let seatText = `${elements.roomInput.value.trim() || "home"} · 本机对弈`;
+  if (connection.connected && connection.side) {
+    seatText = `${connection.roomId} · 你执${SIDES[connection.side].label}`;
+  } else if (connection.userId) {
+    seatText = `${elements.roomInput.value.trim() || "home"} · 已登录`;
+  }
   elements.seatInfo.textContent = seatText;
 
-  elements.connectBtn.disabled = connection.connected && connection.statusKind === "online";
-  elements.disconnectBtn.disabled = !connection.ws;
+  elements.signupBtn.disabled = connection.busy || connection.connected;
+  elements.connectBtn.disabled = connection.busy || (connection.connected && connection.statusKind === "online");
+  elements.disconnectBtn.disabled = connection.busy || (!connection.connected && !connection.userId);
 }
 
 function renderCaptured(container, pieces) {
@@ -314,7 +343,7 @@ function renderCaptured(container, pieces) {
 
 function handleCellClick(row, col) {
   const game = state.game;
-  if (game.gameOver) {
+  if (game.gameOver || state.connection.busy) {
     return;
   }
 
@@ -371,17 +400,30 @@ function clearSelection() {
   state.notice = "";
 }
 
-function requestMove(from, to) {
+async function requestMove(from, to) {
   if (state.connection.connected) {
-    sendOnline({
-      type: "move",
-      from,
-      to: { row: to.row, col: to.col },
-      revision: state.connection.revision,
-    });
+    if (!state.connection.roomUuid || !state.connection.side) {
+      state.notice = "尚未进入房间";
+      renderPanels();
+      return;
+    }
+
+    if (state.game.currentSide !== state.connection.side) {
+      state.notice = "还没轮到你";
+      renderPanels();
+      return;
+    }
+
+    const previousGame = cloneGame(state.game);
+    const result = applyMove(state.game, from, to);
+    if (!result.ok) {
+      state.notice = result.error;
+      render();
+      return;
+    }
+
     clearSelection();
-    state.notice = "正在同步棋局";
-    render();
+    await saveRoomState(result.game, [...state.history, previousGame], "正在同步棋局");
     return;
   }
 
@@ -397,9 +439,15 @@ function requestMove(from, to) {
   render();
 }
 
-function undoMove() {
+async function undoMove() {
   if (state.connection.connected) {
-    sendOnline({ type: "undo" });
+    const previousGame = state.history[state.history.length - 1];
+    if (!previousGame) {
+      state.notice = "没有可悔的棋";
+      renderPanels();
+      return;
+    }
+    await saveRoomState(previousGame, state.history.slice(0, -1), "正在悔棋");
     return;
   }
 
@@ -413,9 +461,9 @@ function undoMove() {
   render();
 }
 
-function resetGame() {
+async function resetGame() {
   if (state.connection.connected) {
-    sendOnline({ type: "reset" });
+    await saveRoomState(createInitialGame(), [], "正在重新开始");
     return;
   }
 
@@ -425,111 +473,358 @@ function resetGame() {
   render();
 }
 
-function connectOnline(event) {
+async function connectOnline(event) {
   event.preventDefault();
-  const roomId = cleanRoomId(elements.roomInput.value);
-  const accessKey = elements.accessKeyInput.value.trim();
-  const name = elements.nameInput.value.trim();
-
-  if (!accessKey) {
-    setConnectionStatus("缺少口令", "error");
+  if (!supabaseClient) {
+    setConnectionStatus("联机组件未加载", "error");
     return;
   }
 
-  localStorage.setItem(STORAGE_KEYS.roomId, roomId);
-  localStorage.setItem(STORAGE_KEYS.accessKey, accessKey);
-  localStorage.setItem(STORAGE_KEYS.name, name);
-  state.connection.roomId = roomId;
-  state.notice = "";
-
-  if (state.connection.ws) {
-    state.connection.ws.close();
+  const authValues = getAuthValues();
+  if (!authValues) {
+    return;
   }
 
-  const ws = new WebSocket(getWebSocketUrl());
-  state.connection.ws = ws;
-  setConnectionStatus("连接中", "pending");
-
-  ws.addEventListener("open", () => {
-    sendOnline({
-      type: "join",
-      roomId,
-      accessKey,
-      name,
-      sessionId: localStorage.getItem(STORAGE_KEYS.sessionId),
+  setBusy(true);
+  setConnectionStatus("登录中", "pending");
+  try {
+    const { data, error } = await supabaseClient.auth.signInWithPassword({
+      email: authValues.email,
+      password: authValues.password,
     });
-  });
+    if (error) {
+      throw error;
+    }
 
-  ws.addEventListener("message", (messageEvent) => {
-    let message;
-    try {
-      message = JSON.parse(messageEvent.data);
-    } catch {
-      setConnectionStatus("消息错误", "error");
+    state.connection.userId = data.user.id;
+    persistForm(authValues);
+    await enterRoom(authValues);
+  } catch (error) {
+    handleOnlineError(error, "登录失败，请检查邮箱和密码");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function registerAccount() {
+  if (!supabaseClient) {
+    setConnectionStatus("联机组件未加载", "error");
+    return;
+  }
+
+  const authValues = getAuthValues();
+  if (!authValues) {
+    return;
+  }
+
+  setBusy(true);
+  setConnectionStatus("注册中", "pending");
+  try {
+    const { data, error } = await supabaseClient.auth.signUp({
+      email: authValues.email,
+      password: authValues.password,
+      options: {
+        data: {
+          display_name: authValues.name,
+        },
+      },
+    });
+    if (error) {
+      throw error;
+    }
+
+    persistForm(authValues);
+    if (data.session && data.user) {
+      state.connection.userId = data.user.id;
+      await enterRoom(authValues);
       return;
     }
-    handleServerMessage(message);
-  });
 
-  ws.addEventListener("close", () => {
-    state.connection.ws = null;
-    state.connection.connected = false;
-    state.connection.side = null;
-    state.connection.canUndo = false;
-    setConnectionStatus("已断开", "offline");
-  });
-
-  ws.addEventListener("error", () => {
-    setConnectionStatus("连接失败", "error");
-  });
-}
-
-function disconnectOnline() {
-  if (state.connection.ws) {
-    state.connection.ws.close();
-  }
-  state.connection.ws = null;
-  state.connection.connected = false;
-  state.connection.side = null;
-  state.connection.canUndo = false;
-  setConnectionStatus("未连接", "offline");
-}
-
-function handleServerMessage(message) {
-  if (message.type === "error") {
-    state.notice = message.message;
-    setConnectionStatus("操作失败", "error");
+    state.notice = "注册成功，请先去邮箱确认账号，再回来点击进入";
+    setConnectionStatus("等待邮箱确认", "pending");
     render();
-    return;
+  } catch (error) {
+    handleOnlineError(error, "注册失败");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function enterRoom(authValues) {
+  const roomId = cleanRoomId(authValues.roomId);
+  setConnectionStatus("进入房间中", "pending");
+
+  const { data, error } = await supabaseClient.rpc("join_chess_room", {
+    requested_room_slug: roomId,
+    player_name: authValues.name,
+  });
+  if (error) {
+    throw error;
   }
 
-  if (message.type !== "state") {
-    return;
+  const seat = firstRow(data);
+  if (!seat || !seat.room_id || !seat.side) {
+    throw new Error("房间返回数据异常");
   }
 
-  state.game = message.game;
-  state.history = [];
-  state.selected = null;
-  state.legalTargets = [];
-  state.notice = "";
   state.connection.connected = true;
-  state.connection.roomId = message.roomId;
-  state.connection.revision = message.revision;
-  state.connection.canUndo = Boolean(message.canUndo);
-  state.connection.players = message.players;
-  state.connection.side = message.you.side;
-  localStorage.setItem(STORAGE_KEYS.sessionId, message.you.sessionId);
+  state.connection.roomId = roomId;
+  state.connection.roomUuid = seat.room_id;
+  state.connection.side = seat.side;
+  state.notice = "";
+
+  await stopRealtime();
+  await refreshRoom();
+  await refreshMembers();
+  startRealtime(seat.room_id);
   setConnectionStatus("已连接", "online");
+
+  if (!state.game || !state.game.board) {
+    await saveRoomState(createInitialGame(), [], "初始化棋局");
+  }
   render();
 }
 
-function sendOnline(payload) {
-  const ws = state.connection.ws;
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
+async function disconnectOnline() {
+  setBusy(true);
+  try {
+    await stopRealtime();
+    if (supabaseClient) {
+      await supabaseClient.auth.signOut();
+    }
+  } finally {
+    state.connection.connected = false;
+    state.connection.userId = null;
+    state.connection.side = null;
+    state.connection.roomUuid = null;
+    state.connection.canUndo = false;
+    state.connection.players = {
+      red: { connected: false, name: "" },
+      black: { connected: false, name: "" },
+    };
     setConnectionStatus("未连接", "offline");
+    setBusy(false);
+    render();
+  }
+}
+
+async function saveRoomState(game, history, pendingText) {
+  if (!state.connection.roomUuid) {
+    state.notice = "尚未进入房间";
+    renderPanels();
     return;
   }
-  ws.send(JSON.stringify(payload));
+
+  setBusy(true);
+  state.notice = pendingText;
+  render();
+
+  try {
+    const { data, error } = await supabaseClient.rpc("update_chess_room_state", {
+      target_room_id: state.connection.roomUuid,
+      expected_revision: state.connection.revision,
+      new_game_state: game,
+      new_history: history,
+    });
+    if (error) {
+      throw error;
+    }
+
+    applyRemoteRoom(firstRow(data) || data);
+    setConnectionStatus("已连接", "online");
+  } catch (error) {
+    handleOnlineError(error, "同步失败");
+    await refreshRoom();
+  } finally {
+    setBusy(false);
+  }
+}
+
+function startRealtime(roomUuid) {
+  if (!supabaseClient) {
+    return;
+  }
+
+  state.connection.channel = supabaseClient
+    .channel(`chess-room-${roomUuid}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "UPDATE",
+        schema: "public",
+        table: "chess_rooms",
+        filter: `id=eq.${roomUuid}`,
+      },
+      (payload) => {
+        applyRemoteRoom(payload.new);
+      },
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "chess_room_members",
+        filter: `room_id=eq.${roomUuid}`,
+      },
+      () => {
+        refreshMembers();
+      },
+    )
+    .subscribe((status) => {
+      if (status === "SUBSCRIBED" && state.connection.connected) {
+        setConnectionStatus("已连接", "online");
+      }
+    });
+}
+
+async function stopRealtime() {
+  if (supabaseClient && state.connection.channel) {
+    await supabaseClient.removeChannel(state.connection.channel);
+  }
+  state.connection.channel = null;
+}
+
+async function refreshRoom() {
+  if (!state.connection.roomUuid) {
+    return;
+  }
+
+  const { data, error } = await supabaseClient
+    .from("chess_rooms")
+    .select("id, slug, game_state, history, revision")
+    .eq("id", state.connection.roomUuid)
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  applyRemoteRoom(data);
+}
+
+async function refreshMembers() {
+  if (!state.connection.roomUuid) {
+    return;
+  }
+
+  const { data, error } = await supabaseClient
+    .from("chess_room_members")
+    .select("side, display_name, user_id")
+    .eq("room_id", state.connection.roomUuid);
+
+  if (error) {
+    throw error;
+  }
+
+  state.connection.players = summarizeMembers(data || []);
+  renderPanels();
+}
+
+function applyRemoteRoom(room) {
+  if (!room) {
+    return;
+  }
+
+  state.game = normalizeGame(room.game_state);
+  state.history = Array.isArray(room.history) ? room.history : [];
+  state.connection.revision = Number(room.revision || 0);
+  state.connection.canUndo = state.history.length > 0;
+  state.selected = null;
+  state.legalTargets = [];
+  state.notice = "";
+  render();
+}
+
+function normalizeGame(value) {
+  if (value && Array.isArray(value.board) && value.board.length === ROWS) {
+    return value;
+  }
+  return createInitialGame();
+}
+
+function summarizeMembers(members) {
+  return {
+    red: summarizeMember(members.find((member) => member.side === "red")),
+    black: summarizeMember(members.find((member) => member.side === "black")),
+  };
+}
+
+function summarizeMember(member) {
+  if (!member) {
+    return { connected: false, name: "" };
+  }
+  return {
+    connected: true,
+    name: member.display_name || "",
+  };
+}
+
+function getAuthValues() {
+  const email = elements.emailInput.value.trim();
+  const password = elements.passwordInput.value;
+  const name = elements.nameInput.value.trim().slice(0, 16) || "棋友";
+  const roomId = cleanRoomId(elements.roomInput.value);
+
+  if (!email || !email.includes("@")) {
+    state.notice = "请填写邮箱";
+    setConnectionStatus("缺少邮箱", "error");
+    render();
+    return null;
+  }
+
+  if (password.length < 6) {
+    state.notice = "密码至少 6 位";
+    setConnectionStatus("密码太短", "error");
+    render();
+    return null;
+  }
+
+  return { email, password, name, roomId };
+}
+
+function persistForm(values) {
+  localStorage.setItem(STORAGE_KEYS.roomId, values.roomId);
+  localStorage.setItem(STORAGE_KEYS.name, values.name);
+  localStorage.setItem(STORAGE_KEYS.email, values.email);
+  state.connection.roomId = values.roomId;
+}
+
+function handleOnlineError(error, fallbackMessage) {
+  const message = getErrorMessage(error, fallbackMessage);
+  state.notice = message;
+  setConnectionStatus("操作失败", "error");
+  render();
+}
+
+function getErrorMessage(error, fallbackMessage) {
+  const rawMessage = String((error && error.message) || fallbackMessage || "操作失败");
+
+  if (rawMessage.includes("Invalid login credentials")) {
+    return "登录失败，请检查邮箱和密码；还没有账号请先注册";
+  }
+
+  if (rawMessage.includes("Email not confirmed")) {
+    return "邮箱还没有确认，请先打开验证邮件";
+  }
+
+  if (rawMessage.includes("room_full")) {
+    return "这个房间已经有两名玩家";
+  }
+
+  if (rawMessage.includes("not_room_member")) {
+    return "你不是这个房间的玩家";
+  }
+
+  if (rawMessage.includes("revision_conflict")) {
+    return "棋局刚刚更新，请重新走这一步";
+  }
+
+  if (rawMessage.includes("Could not find the function")) {
+    return "Supabase 数据库还没有初始化，请先执行 supabase-schema.sql";
+  }
+
+  return rawMessage || fallbackMessage;
 }
 
 async function copyInviteLink() {
@@ -546,20 +841,19 @@ async function copyInviteLink() {
   renderPanels();
 }
 
+function firstRow(data) {
+  return Array.isArray(data) ? data[0] : data;
+}
+
+function setBusy(isBusy) {
+  state.connection.busy = isBusy;
+  renderConnectionPanel();
+}
+
 function setConnectionStatus(status, kind) {
   state.connection.status = status;
   state.connection.statusKind = kind;
   renderConnectionPanel();
-}
-
-function getWebSocketUrl() {
-  if (window.location.protocol === "https:") {
-    return `wss://${window.location.host}/ws`;
-  }
-  if (window.location.host) {
-    return `ws://${window.location.host}/ws`;
-  }
-  return "ws://localhost:3000/ws";
 }
 
 function cleanRoomId(value) {
@@ -568,11 +862,4 @@ function cleanRoomId(value) {
     .replace(/[^a-zA-Z0-9_-]/g, "")
     .slice(0, 32);
   return roomId || "home";
-}
-
-function createSessionId() {
-  if (window.crypto && window.crypto.randomUUID) {
-    return window.crypto.randomUUID();
-  }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }

@@ -28,6 +28,14 @@
       <section class="connect-panel" aria-label="连接房间">
         <form id="connectForm" class="connect-form">
           <label>
+            <span>邮箱</span>
+            <input id="emailInput" name="email" type="email" autocomplete="email" placeholder="you@example.com" />
+          </label>
+          <label>
+            <span>登录密码</span>
+            <input id="passwordInput" name="password" type="password" autocomplete="current-password" />
+          </label>
+          <label>
             <span>昵称</span>
             <input id="nameInput" name="name" type="text" autocomplete="nickname" maxlength="16" placeholder="我" />
           </label>
@@ -35,17 +43,17 @@
             <span>房间</span>
             <input id="roomInput" name="room" type="text" autocomplete="off" maxlength="32" placeholder="home" />
           </label>
-          <label>
-            <span>私人口令</span>
-            <input id="accessKeyInput" name="accessKey" type="password" autocomplete="current-password" />
-          </label>
+          <button id="signupBtn" class="tool-button" type="button" title="注册账号" aria-label="注册账号">
+            <span aria-hidden="true">＋</span>
+            <span>注册</span>
+          </button>
           <button id="connectBtn" class="tool-button primary" type="submit" title="连接" aria-label="连接">
             <span aria-hidden="true">⛓</span>
-            <span>连接</span>
+            <span>进入</span>
           </button>
           <button id="disconnectBtn" class="tool-button" type="button" title="断开" aria-label="断开" disabled>
             <span aria-hidden="true">⏏</span>
-            <span>断开</span>
+            <span>退出</span>
           </button>
           <button id="copyLinkBtn" class="tool-button" type="button" title="复制房间链接" aria-label="复制房间链接">
             <span aria-hidden="true">⧉</span>
@@ -112,6 +120,7 @@
       </section>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="xiangqi-core.js"></script>
     <script src="script.js"></script>
   </body>
