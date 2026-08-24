@@ -343,20 +343,54 @@ function renderPanels() {
 
 function renderPlayerLabel(side) {
   const player = state.connection.players[side];
+  const presence = getSeatPresenceForSide(side);
   const nameEl = side === "red" ? elements.redName : elements.blackName;
   const metaEl = side === "red" ? elements.redMeta : elements.blackMeta;
   const defaultName = side === "red" ? "玩家1" : "玩家2";
   const bits = [SIDES[side].label];
 
   if (state.connection.connected) {
-    bits.push(player.connected ? "已加入" : "空位");
+    if (presence && presence.online === false) {
+      bits.push("已退出");
+    } else if (player.connected || (presence && presence.online === true)) {
+      bits.push("已加入");
+    } else {
+      bits.push("空位");
+    }
+
     if (state.connection.side === side) {
       bits.push("你");
     }
   }
 
-  nameEl.textContent = player.name || defaultName;
+  nameEl.textContent = player.name || (presence && presence.name) || defaultName;
   metaEl.textContent = bits.join(" · ");
+}
+
+function getSeatPresenceForSide(side) {
+  const presence = getSeatPresence();
+  return presence[side] || null;
+}
+
+function getSeatPresence(game = state.game) {
+  return normalizeSeatPresence(game && game.seatPresence);
+}
+
+function normalizeSeatPresence(value) {
+  const result = {};
+  ["red", "black"].forEach((side) => {
+    const entry = value && value[side];
+    if (!entry || typeof entry !== "object" || typeof entry.online !== "boolean") {
+      return;
+    }
+
+    result[side] = {
+      online: entry.online,
+      name: cleanUsername(entry.name || ""),
+      updatedAt: String(entry.updatedAt || "").slice(0, 40),
+    };
+  });
+  return result;
 }
 
 function renderConnectionPanel() {
@@ -947,6 +981,7 @@ async function enterRoom(authValues) {
   if (!room || !room.game_state) {
     await saveRoomState(state.game || createInitialGame(), [], "初始化棋局");
   }
+  await syncOwnSeatPresence(true, "正在同步座位状态");
   render();
 }
 
@@ -954,6 +989,7 @@ async function disconnectOnline() {
   let leaveError = null;
   setBusy(true);
   try {
+    await syncOwnSeatPresence(false, "正在退出房间");
     await stopRealtime();
     await leaveCurrentRoomOnServer();
   } catch (error) {
@@ -1001,17 +1037,7 @@ async function saveRoomState(game, history, pendingText) {
   render();
 
   try {
-    const { data, error } = await supabaseClient.rpc("update_chess_room_state", {
-      target_room_id: state.connection.roomUuid,
-      expected_revision: state.connection.revision,
-      new_game_state: game,
-      new_history: history,
-    });
-    if (error) {
-      throw error;
-    }
-
-    applyRemoteRoom(firstRow(data) || data);
+    await writeRoomState(prepareGameForSync(game), history);
     setConnectionStatus("已连接", "online");
   } catch (error) {
     handleOnlineError(error, "同步失败");
@@ -1019,6 +1045,78 @@ async function saveRoomState(game, history, pendingText) {
   } finally {
     setBusy(false);
   }
+}
+
+async function syncOwnSeatPresence(isOnline, pendingText) {
+  if (!state.connection.roomUuid || !state.connection.side) {
+    return;
+  }
+
+  state.notice = pendingText;
+  render();
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const game = buildSeatPresenceGame(state.game, state.connection.side, isOnline);
+    try {
+      await writeRoomState(game, state.history);
+      return;
+    } catch (error) {
+      if (!String(error.message || "").includes("revision_conflict") || attempt === 1) {
+        throw error;
+      }
+      await refreshRoom();
+    }
+  }
+}
+
+async function writeRoomState(game, history) {
+  const { data, error } = await supabaseClient.rpc("update_chess_room_state", {
+    target_room_id: state.connection.roomUuid,
+    expected_revision: state.connection.revision,
+    new_game_state: game,
+    new_history: history,
+  });
+  if (error) {
+    throw error;
+  }
+
+  const room = firstRow(data) || data;
+  applyRemoteRoom(room);
+  return room;
+}
+
+function prepareGameForSync(game) {
+  const prepared = { ...game };
+  const presence = normalizeSeatPresence(
+    prepared.seatPresence || (state.game && state.game.seatPresence),
+  );
+
+  if (Object.keys(presence).length > 0) {
+    prepared.seatPresence = presence;
+  }
+
+  return prepared;
+}
+
+function buildSeatPresenceGame(game, side, isOnline) {
+  const prepared = prepareGameForSync(game || createInitialGame());
+  prepared.seatPresence = normalizeSeatPresence({
+    ...prepared.seatPresence,
+    [side]: {
+      online: isOnline,
+      name: getCurrentDisplayName(),
+      updatedAt: new Date().toISOString(),
+    },
+  });
+  return prepared;
+}
+
+function getCurrentDisplayName() {
+  return (
+    cleanUsername(elements.usernameInput.value) ||
+    state.connection.players[state.connection.side]?.name ||
+    "棋友"
+  );
 }
 
 function startRealtime(roomUuid) {
@@ -1122,13 +1220,15 @@ function applyRemoteRoom(room) {
 function normalizeGame(value) {
   if (value && Array.isArray(value.board) && value.board.length === ROWS) {
     const base = createInitialGame();
-    return cloneGame({
+    const game = cloneGame({
       ...base,
       ...value,
       captured: value.captured || base.captured,
       moveLog: value.moveLog || base.moveLog,
       specials: value.specials || base.specials,
     });
+    game.seatPresence = normalizeSeatPresence(value.seatPresence);
+    return game;
   }
   return createInitialGame();
 }
