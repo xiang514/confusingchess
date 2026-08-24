@@ -206,10 +206,6 @@
     }
 
     if (target && shouldCaptureCavalryAsHorse(target, to.row, piece)) {
-      if (isRoyal(piece)) {
-        return { ok: false, error: "将帅不能缴获骑兵" };
-      }
-
       const deadSoldier = createDeadSoldierFromCavalry(target);
       const movedPiece = prepareMovedPiece(piece, to.row);
       game.board[to.row][to.col] = movedPiece;
@@ -323,7 +319,7 @@
 
     const nextGame = cloneGame(game);
     const side = nextGame.currentSide;
-    if (!isInCheck(nextGame.board, side)) {
+    if (!isInCheck(nextGame, side)) {
       return { ok: false, error: "只有被将军时才能翻身上马" };
     }
 
@@ -354,7 +350,7 @@
       text: `翻身上马 ${SYMBOLS[side].king} ${formatPoint(mountOption.king)} → ${formatPoint(validHorse)}`,
     });
 
-    if (isInCheck(nextGame.board, side)) {
+    if (isInCheck(nextGame, side)) {
       return { ok: false, error: "上马后仍会被将军" };
     }
 
@@ -378,7 +374,7 @@
     }
 
     nextGame.currentSide = oppositeSide(movingSide);
-    const checked = isInCheck(nextGame.board, nextGame.currentSide);
+    const checked = isInCheck(nextGame, nextGame.currentSide);
     const hasMove = hasAnyLegalMove(nextGame, nextGame.currentSide);
 
     if (!hasMove) {
@@ -413,7 +409,7 @@
       if (!nextBoard) {
         return false;
       }
-      return !isInCheck(nextBoard, piece.side);
+      return !isInCheck(game ? { ...game, board: nextBoard } : nextBoard, piece.side);
     });
   }
 
@@ -675,7 +671,8 @@
         if (target) {
           if (target.side !== piece.side) {
             const nextBoard = createBoardAfterDongfengCapture(board, row, col, nextRow, nextCol);
-            if (!isInCheck(nextBoard, piece.side)) {
+            const checkContext = game.board ? { ...game, board: nextBoard } : nextBoard;
+            if (!isInCheck(checkContext, piece.side)) {
               moves.push({ row: nextRow, col: nextCol, capture: true, mode: "dongfeng" });
             }
           }
@@ -722,7 +719,7 @@
 
   function getHorseMountOptions(game, side = game.currentSide) {
     const board = game.board || game;
-    if (!isInCheck(board, side)) {
+    if (!isInCheck(game, side)) {
       return [];
     }
 
@@ -751,7 +748,8 @@
         const nextBoard = cloneBoard(board);
         nextBoard[row][col] = { ...royal, type: "mountedKing", mountedHorseId: piece.id };
         nextBoard[king.row][king.col] = null;
-        if (!isInCheck(nextBoard, side)) {
+        const checkContext = game.board ? { ...game, board: nextBoard } : nextBoard;
+        if (!isInCheck(checkContext, side)) {
           options.push({ row, col, king: { ...king }, mode: "mount" });
         }
       }
@@ -789,9 +787,6 @@
     }
 
     if (nextTarget && shouldCaptureCavalryAsHorse(nextTarget, toRow, moving)) {
-      if (isRoyal(moving)) {
-        return null;
-      }
       nextBoard[toRow][toCol] = prepareMovedPiece(moving, toRow);
       nextBoard[fromRow][fromCol] = null;
       return nextBoard;
@@ -992,7 +987,9 @@
     }
   }
 
-  function isInCheck(board, side) {
+  function isInCheck(gameOrBoard, side) {
+    const game = Array.isArray(gameOrBoard) ? null : gameOrBoard;
+    const board = game ? game.board : gameOrBoard;
     const king = findRoyal(board, side);
     if (!king) {
       return true;
@@ -1003,6 +1000,10 @@
       for (let col = 0; col < COLS; col += 1) {
         const piece = board[row][col];
         if (!piece || piece.side !== enemySide) {
+          continue;
+        }
+
+        if (isFlatFootedBlocked(game, piece)) {
           continue;
         }
 
