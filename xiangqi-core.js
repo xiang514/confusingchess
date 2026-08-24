@@ -1011,10 +1011,39 @@
         if (attacks.some((move) => move.row === king.row && move.col === king.col)) {
           return true;
         }
+
+        if (isDongfengLineThreat(game, board, row, col, king, piece)) {
+          return true;
+        }
       }
     }
 
     return false;
+  }
+
+  function isDongfengLineThreat(game, board, row, col, target, piece) {
+    if (!game || !game.specials || !piece || piece.type !== "cannon" || !canUseDongfeng(game, piece.side)) {
+      return false;
+    }
+
+    if (row !== target.row && col !== target.col) {
+      return false;
+    }
+
+    const rowStep = row === target.row ? 0 : target.row > row ? 1 : -1;
+    const colStep = col === target.col ? 0 : target.col > col ? 1 : -1;
+    let nextRow = row + rowStep;
+    let nextCol = col + colStep;
+
+    while (nextRow !== target.row || nextCol !== target.col) {
+      if (board[nextRow][nextCol]) {
+        return false;
+      }
+      nextRow += rowStep;
+      nextCol += colStep;
+    }
+
+    return true;
   }
 
   function hasAnyLegalMove(gameOrBoard, side) {
