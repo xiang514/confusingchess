@@ -1,5 +1,6 @@
 :root {
   color-scheme: light;
+  --page: #eee8df;
   --ink: #201a18;
   --muted: #74675d;
   --paper: #f6f4ef;
@@ -12,7 +13,10 @@
   --black: #171717;
   --green: #1f6f5b;
   --gold: #f3d78c;
-  --shadow: 0 18px 44px rgba(45, 31, 20, 0.16);
+  --shadow: 0 12px 30px rgba(45, 31, 20, 0.12);
+  --board-max: 488px;
+  --side-width: 300px;
+  --layout-gap: 24px;
 }
 
 * {
@@ -21,10 +25,11 @@
 
 body {
   min-width: 320px;
+  min-height: 100vh;
   margin: 0;
-  background:
-    radial-gradient(circle at 8% 12%, rgba(181, 37, 42, 0.08), transparent 28%),
-    linear-gradient(135deg, #f8f7f3 0%, #ebe5dc 100%);
+  display: grid;
+  place-items: center;
+  background: var(--page);
   color: var(--ink);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -36,21 +41,18 @@ button {
 }
 
 .app-shell {
-  width: min(1180px, calc(100vw - 32px));
-  min-height: 100vh;
+  width: min(calc(var(--board-max) + var(--side-width) + var(--layout-gap)), calc(100vw - 32px));
   margin: 0 auto;
-  padding: 28px 0;
+  padding: 8px 0 10px;
 }
 
 .topbar {
-  display: flex;
-  align-items: flex-end;
-  justify-content: flex-start;
-  gap: 18px;
-  margin-bottom: 18px;
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 0;
+  background: transparent;
 }
 
-.eyebrow,
 .panel-label {
   margin: 0;
   color: var(--muted);
@@ -59,11 +61,36 @@ button {
   letter-spacing: 0;
 }
 
-h1 {
-  margin: 4px 0 0;
-  font-size: clamp(2rem, 5vw, 4.4rem);
-  line-height: 0.95;
+.brand-mark {
+  margin: 0 0 4px;
+  color: #3a3632;
+  font-size: 1rem;
+  font-weight: 900;
   letter-spacing: 0;
+}
+
+.title-line {
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+}
+
+h1 {
+  margin: 0;
+  color: #050505;
+  font-size: clamp(4.2rem, 7.2vw, 5.8rem);
+  font-weight: 950;
+  line-height: 0.9;
+  letter-spacing: 0;
+}
+
+.tagline {
+  margin: 0 0 8px;
+  color: #35312d;
+  font-size: clamp(1.4rem, 2vw, 1.9rem);
+  font-weight: 900;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .actions {
@@ -74,27 +101,39 @@ h1 {
 }
 
 .board-actions {
-  width: min(100%, 720px);
-  margin: 0 0 14px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  width: 100%;
+  margin: 0;
+}
+
+.board-actions .tool-button {
+  min-width: 0;
+  min-height: 34px;
+  gap: 4px;
+  padding: 0 4px;
+  font-size: 0.68rem;
+}
+
+.board-actions .tool-button span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .connect-panel {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: end;
-  margin-bottom: 18px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: rgba(255, 253, 248, 0.82);
-  box-shadow: 0 10px 22px rgba(45, 31, 20, 0.08);
+  margin-bottom: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .connect-form {
   display: grid;
-  grid-template-columns: repeat(4, minmax(118px, 1fr)) auto auto auto auto;
-  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px 12px;
   align-items: end;
 }
 
@@ -112,11 +151,11 @@ h1 {
 
 .connect-form input {
   width: 100%;
-  min-height: 42px;
-  border: 1px solid #bdb0a3;
+  min-height: 38px;
+  border: 1px solid #c9beb4;
   border-radius: 8px;
   padding: 0 12px;
-  background: #fffaf3;
+  background: rgba(255, 253, 248, 0.92);
   color: var(--ink);
   font: inherit;
 }
@@ -128,22 +167,30 @@ h1 {
 
 .connection-state {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
   gap: 6px;
-  min-width: 150px;
+  min-width: 0;
+  min-height: 38px;
   color: var(--muted);
   font-size: 0.88rem;
+  overflow: hidden;
+}
+
+.connection-state span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .connection-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 28px;
+  min-height: 30px;
   padding: 0 10px;
-  border: 1px solid currentColor;
-  border-radius: 999px;
+  border: 1px solid rgba(116, 103, 93, 0.22);
+  border-radius: 8px;
   font-size: 0.82rem;
   font-weight: 800;
 }
@@ -173,11 +220,11 @@ h1 {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 42px;
-  padding: 0 14px;
-  border: 1px solid #bdb0a3;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid #c9beb4;
   border-radius: 8px;
-  background: rgba(255, 253, 248, 0.88);
+  background: rgba(255, 253, 248, 0.92);
   color: var(--ink);
   cursor: pointer;
   white-space: nowrap;
@@ -185,6 +232,12 @@ h1 {
     transform 150ms ease,
     border-color 150ms ease,
     background 150ms ease;
+}
+
+.connect-form .tool-button {
+  width: 100%;
+  min-width: 0;
+  padding: 0 10px;
 }
 
 .tool-button:hover {
@@ -214,28 +267,33 @@ h1 {
 
 .game-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 24px;
+  grid-template-columns: minmax(0, var(--board-max)) minmax(0, var(--side-width));
+  justify-content: center;
+  gap: var(--layout-gap);
   align-items: start;
 }
 
 .board-area {
+  display: grid;
+  justify-items: center;
   min-width: 0;
 }
 
 .players {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 0;
 }
 
 .player {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  padding: 12px 14px;
+  min-height: 58px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 253, 248, 0.74);
@@ -288,7 +346,7 @@ h1 {
 
 .board {
   position: relative;
-  width: min(100%, 720px);
+  width: min(100%, var(--board-max));
   aspect-ratio: 9 / 10;
   overflow: hidden;
   border: clamp(4px, 0.8vw, 8px) solid var(--board-dark);
@@ -385,7 +443,7 @@ h1 {
     0 6px 12px rgba(47, 29, 12, 0.28);
   font-family:
     "STKaiti", "Kaiti SC", "KaiTi", "Songti SC", "Noto Serif CJK SC", serif;
-  font-size: clamp(1.1rem, 4.6vmin, 2rem);
+  font-size: clamp(1rem, 3.2vmin, 1.45rem);
   font-weight: 800;
   line-height: 1;
   user-select: none;
@@ -400,7 +458,7 @@ h1 {
 }
 
 .piece.combined {
-  font-size: clamp(0.78rem, 3.3vmin, 1.28rem);
+  font-size: clamp(0.72rem, 2.5vmin, 1.05rem);
 }
 
 .piece.stealthed::after,
@@ -438,7 +496,8 @@ h1 {
 
 .side-panel {
   display: grid;
-  gap: 14px;
+  gap: 10px;
+  align-content: start;
 }
 
 .status-panel,
@@ -447,16 +506,16 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 253, 248, 0.82);
-  box-shadow: 0 10px 22px rgba(45, 31, 20, 0.08);
+  box-shadow: 0 7px 16px rgba(45, 31, 20, 0.06);
 }
 
 .status-panel {
-  padding: 18px;
+  padding: 14px 16px;
 }
 
 .status-panel h2 {
   margin: 6px 0 8px;
-  font-size: 1.45rem;
+  font-size: 1.22rem;
   letter-spacing: 0;
 }
 
@@ -469,8 +528,8 @@ h1 {
 
 .capture-panel {
   display: grid;
-  gap: 16px;
-  padding: 16px;
+  gap: 12px;
+  padding: 14px 16px;
 }
 
 .captured-line {
@@ -478,8 +537,8 @@ h1 {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  min-height: 34px;
-  margin-top: 8px;
+  min-height: 30px;
+  margin-top: 6px;
 }
 
 .captured-piece {
@@ -521,7 +580,7 @@ h1 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -534,15 +593,15 @@ h1 {
 .move-log {
   display: grid;
   gap: 2px;
-  max-height: min(42vh, 390px);
+  max-height: 155px;
   margin: 0;
-  padding: 8px 0;
+  padding: 6px 0;
   overflow: auto;
   list-style-position: inside;
 }
 
 .move-log li {
-  padding: 8px 16px;
+  padding: 7px 16px;
   color: #3d342e;
   font-size: 0.92rem;
 }
@@ -562,8 +621,21 @@ h1 {
 }
 
 @media (max-width: 920px) {
-  .connect-panel {
-    grid-template-columns: 1fr;
+  body {
+    display: block;
+  }
+
+  .app-shell {
+    width: min(100vw - 18px, 640px);
+    padding: 16px 0;
+  }
+
+  .topbar {
+    margin-bottom: 14px;
+  }
+
+  .title-line {
+    gap: 16px;
   }
 
   .connect-form {
@@ -578,6 +650,10 @@ h1 {
     grid-template-columns: 1fr;
   }
 
+  .board-area {
+    justify-items: center;
+  }
+
   .board {
     margin-inline: auto;
   }
@@ -590,6 +666,11 @@ h1 {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .players,
+  .board-actions {
+    grid-column: 1 / -1;
+  }
+
   .move-log {
     max-height: 250px;
   }
@@ -598,12 +679,20 @@ h1 {
 @media (max-width: 700px) {
   .app-shell {
     width: min(100vw - 18px, 640px);
-    padding: 16px 0;
   }
 
-  .topbar {
-    align-items: stretch;
-    flex-direction: column;
+  .title-line {
+    display: block;
+  }
+
+  h1 {
+    font-size: clamp(3.4rem, 18vw, 4.8rem);
+    line-height: 0.96;
+  }
+
+  .tagline {
+    margin-top: 8px;
+    font-size: 1.25rem;
   }
 
   .actions {
