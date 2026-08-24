@@ -183,8 +183,28 @@ begin
 end;
 $$;
 
+create or replace function public.leave_chess_room(target_room_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+begin
+  if v_user_id is null then
+    raise exception 'not_authenticated';
+  end if;
+
+  delete from public.chess_room_members m
+  where m.room_id = target_room_id
+    and m.user_id = v_user_id;
+end;
+$$;
+
 grant execute on function public.join_chess_room(text, text) to authenticated;
 grant execute on function public.update_chess_room_state(uuid, integer, jsonb, jsonb) to authenticated;
+grant execute on function public.leave_chess_room(uuid) to authenticated;
 
 do $$
 begin

@@ -89,7 +89,7 @@ const state = {
       red: { connected: false, name: "" },
       black: { connected: false, name: "" },
     },
-    status: "未连接",
+    status: "未登录",
     statusKind: "offline",
   },
 };
@@ -101,19 +101,20 @@ render();
 
 function initConnectionForm() {
   const params = new URLSearchParams(window.location.search);
-  const roomId = params.get("room") || localStorage.getItem(STORAGE_KEYS.roomId) || "home";
+  const roomId = cleanRoomId(params.get("room") || localStorage.getItem(STORAGE_KEYS.roomId) || "");
   const username = localStorage.getItem(STORAGE_KEYS.username) || "";
 
   elements.roomInput.value = roomId;
   elements.usernameInput.value = username;
-  state.connection.roomId = roomId;
 }
 
 function bindEvents() {
-  elements.connectForm.addEventListener("submit", connectOnline);
+  elements.connectForm.addEventListener("submit", handleConnectFormSubmit);
   elements.signupBtn.addEventListener("click", registerAccount);
-  elements.enterRoomBtn.addEventListener("click", connectOnline);
+  elements.enterRoomBtn.addEventListener("click", enterRoomFromInput);
   elements.disconnectBtn.addEventListener("click", disconnectOnline);
+  elements.roomInput.addEventListener("input", renderConnectionPanel);
+  elements.usernameInput.addEventListener("input", renderConnectionPanel);
   elements.dongfengBtn.addEventListener("click", toggleDongfengMode);
   elements.mountBtn.addEventListener("click", toggleMountMode);
   elements.resetBtn.addEventListener("click", resetGame);
@@ -131,6 +132,11 @@ async function restoreSession() {
   const user = data.session && data.session.user;
   if (user) {
     state.connection.userId = user.id;
+    const username = user.user_metadata && user.user_metadata.username;
+    if (!elements.usernameInput.value && username) {
+      elements.usernameInput.value = username;
+      localStorage.setItem(STORAGE_KEYS.username, username);
+    }
     setConnectionStatus("已登录", "pending");
   }
 }
@@ -358,18 +364,22 @@ function renderConnectionPanel() {
   elements.connectionBadge.textContent = connection.status;
   elements.connectionBadge.className = `connection-badge ${connection.statusKind}`;
 
-  let seatText = `${elements.roomInput.value.trim() || "home"} · 本机对弈`;
+  const requestedRoomId = cleanRoomId(elements.roomInput.value);
+  let seatText = "请先注册或登录";
   if (connection.connected && connection.side) {
     seatText = `${connection.roomId} · 你执${SIDES[connection.side].label}`;
   } else if (connection.userId) {
-    seatText = `${elements.roomInput.value.trim() || "home"} · 已登录`;
+    seatText = requestedRoomId ? `已登录 · 待进入 ${requestedRoomId}` : "已登录 · 未进入房间";
+  } else if (connection.status === "注册成功") {
+    seatText = "注册成功 · 请登录";
   }
   elements.seatInfo.textContent = seatText;
 
-  elements.signupBtn.disabled = connection.busy || connection.connected;
-  elements.connectBtn.disabled = connection.busy || (connection.connected && connection.statusKind === "online");
-  elements.enterRoomBtn.disabled = connection.busy || (connection.connected && connection.statusKind === "online");
-  elements.disconnectBtn.disabled = connection.busy || (!connection.connected && !connection.userId);
+  elements.signupBtn.disabled = connection.busy || Boolean(connection.userId) || connection.connected;
+  elements.connectBtn.disabled = connection.busy || Boolean(connection.userId) || connection.connected;
+  elements.enterRoomBtn.disabled = connection.busy || !connection.userId || connection.connected;
+  elements.disconnectBtn.disabled = connection.busy || !connection.connected;
+  elements.roomInput.disabled = connection.busy || connection.connected;
 }
 
 function renderCaptured(container, pieces) {
@@ -767,12 +777,34 @@ async function resetGame() {
   render();
 }
 
-async function connectOnline(event) {
+async function handleConnectFormSubmit(event) {
   if (event) {
     event.preventDefault();
   }
+
+  if (state.connection.userId && !state.connection.connected) {
+    await enterRoomFromInput();
+    return;
+  }
+
+  await connectOnline();
+}
+
+async function connectOnline() {
   if (!supabaseClient) {
     setConnectionStatus("联机组件未加载", "error");
+    return;
+  }
+
+  if (state.connection.connected) {
+    setConnectionStatus("已进入房间", "online");
+    return;
+  }
+
+  if (state.connection.userId) {
+    state.notice = "已经登录，请输入房间号并点击进入";
+    setConnectionStatus("已登录", "pending");
+    render();
     return;
   }
 
@@ -794,7 +826,9 @@ async function connectOnline(event) {
 
     state.connection.userId = data.user.id;
     persistForm(authValues);
-    await enterRoom(authValues);
+    state.notice = "登录成功，请输入房间号并点击进入";
+    setConnectionStatus("已登录", "pending");
+    render();
   } catch (error) {
     handleOnlineError(error, "登录失败，请检查登录名和密码");
   } finally {
@@ -831,17 +865,51 @@ async function registerAccount() {
     }
 
     persistForm(authValues);
-    if (data.session && data.user) {
-      state.connection.userId = data.user.id;
-      await enterRoom(authValues);
-      return;
+    if (data.session) {
+      await supabaseClient.auth.signOut();
     }
 
-    state.notice = "注册成功，但后台仍要求账号确认；请在 Supabase 关闭邮箱确认后重新注册或手动确认账号";
-    setConnectionStatus("等待账号确认", "pending");
+    state.connection.userId = null;
+    state.notice = "注册成功，请用刚才的登录名和密码登录";
+    setConnectionStatus("注册成功", "pending");
     render();
   } catch (error) {
     handleOnlineError(error, "注册失败");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function enterRoomFromInput() {
+  if (!supabaseClient) {
+    setConnectionStatus("联机组件未加载", "error");
+    return;
+  }
+
+  if (!state.connection.userId) {
+    state.notice = "请先登录，再进入房间";
+    setConnectionStatus("请先登录", "error");
+    render();
+    return;
+  }
+
+  if (state.connection.connected) {
+    setConnectionStatus("已进入房间", "online");
+    return;
+  }
+
+  const roomId = getRequestedRoomId();
+  if (!roomId) {
+    return;
+  }
+
+  const username = cleanUsername(elements.usernameInput.value) || "棋友";
+  setBusy(true);
+  try {
+    await enterRoom({ roomId, name: username });
+    persistRoom(roomId);
+  } catch (error) {
+    handleOnlineError(error, "进入房间失败");
   } finally {
     setBusy(false);
   }
@@ -883,25 +951,41 @@ async function enterRoom(authValues) {
 }
 
 async function disconnectOnline() {
+  let leaveError = null;
   setBusy(true);
   try {
     await stopRealtime();
-    if (supabaseClient) {
-      await supabaseClient.auth.signOut();
-    }
+    await leaveCurrentRoomOnServer();
+  } catch (error) {
+    leaveError = error;
   } finally {
-    state.connection.connected = false;
-    state.connection.userId = null;
-    state.connection.side = null;
-    state.connection.roomUuid = null;
-    state.connection.canUndo = false;
-    state.connection.players = {
-      red: { connected: false, name: "" },
-      black: { connected: false, name: "" },
-    };
-    setConnectionStatus("未连接", "offline");
+    resetRoomConnectionState();
+    state.game = createInitialGame();
+    state.history = [];
+    clearSelection();
+    state.notice = leaveError
+      ? "已退出当前页面；房间座位稍后可通过重置房间清理"
+      : "已退出房间，可输入房间号再进入";
+    setConnectionStatus(
+      state.connection.userId ? "已登录" : "未登录",
+      state.connection.userId ? "pending" : "offline",
+    );
     setBusy(false);
     render();
+  }
+}
+
+async function leaveCurrentRoomOnServer() {
+  if (!supabaseClient || !state.connection.roomUuid) {
+    return;
+  }
+
+  const { error } = await supabaseClient.rpc("leave_chess_room", {
+    target_room_id: state.connection.roomUuid,
+  });
+
+  if (error && !String(error.message || "").includes("Could not find the function")) {
+    throw error;
   }
 }
 
@@ -1069,7 +1153,6 @@ function summarizeMember(member) {
 async function getAuthValues() {
   const username = cleanUsername(elements.usernameInput.value);
   const password = elements.passwordInput.value;
-  const roomId = cleanRoomId(elements.roomInput.value);
 
   if (username.length < 2) {
     state.notice = "登录名至少 2 个字符";
@@ -1086,13 +1169,16 @@ async function getAuthValues() {
   }
 
   const email = await usernameToInternalEmail(username);
-  return { username, email, password, name: username, roomId };
+  return { username, email, password, name: username };
 }
 
 function persistForm(values) {
-  localStorage.setItem(STORAGE_KEYS.roomId, values.roomId);
   localStorage.setItem(STORAGE_KEYS.username, values.username);
-  state.connection.roomId = values.roomId;
+}
+
+function persistRoom(roomId) {
+  localStorage.setItem(STORAGE_KEYS.roomId, roomId);
+  state.connection.roomId = roomId;
 }
 
 function cleanUsername(value) {
@@ -1189,10 +1275,35 @@ function setConnectionStatus(status, kind) {
   renderConnectionPanel();
 }
 
+function getRequestedRoomId() {
+  const roomId = cleanRoomId(elements.roomInput.value);
+  if (!roomId) {
+    state.notice = "请输入房间号后再进入";
+    setConnectionStatus("缺少房间号", "error");
+    render();
+    return "";
+  }
+
+  elements.roomInput.value = roomId;
+  return roomId;
+}
+
+function resetRoomConnectionState() {
+  state.connection.connected = false;
+  state.connection.side = null;
+  state.connection.roomUuid = null;
+  state.connection.roomId = "";
+  state.connection.revision = 0;
+  state.connection.canUndo = false;
+  state.connection.players = {
+    red: { connected: false, name: "" },
+    black: { connected: false, name: "" },
+  };
+}
+
 function cleanRoomId(value) {
-  const roomId = String(value || "home")
+  return String(value || "")
     .trim()
     .replace(/[^a-zA-Z0-9_-]/g, "")
     .slice(0, 32);
-  return roomId || "home";
 }
