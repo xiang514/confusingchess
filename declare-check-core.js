@@ -88,7 +88,10 @@
     }
 
     ensureRuleFields(result.game, { pendingCheckDeclaration: pending, lastCheckDeclaration: last, sideAssignments: game.sideAssignments });
-    applyPostMoveRules(result.game, context);
+    const postMove = applyPostMoveRules(result.game, context, options);
+    if (postMove && postMove.captured) {
+      result.captured = postMove.captured;
+    }
     return resolveDeclarationResult(result, movingSide, pending);
   };
 
@@ -122,14 +125,16 @@
     };
   }
 
-  function applyPostMoveRules(game, context) {
+  function applyPostMoveRules(game, context, options = {}) {
     if (!context || !context.piece) {
-      return;
+      return null;
     }
 
+    const cavalryCapture = rerouteCavalryCapture(game, context, options);
     if (shouldRetireElephant(context)) {
       retireElephant(game, context);
     }
+    return cavalryCapture;
   }
 
   function shouldRetireElephant(context) {
@@ -148,21 +153,68 @@
       return;
     }
 
-    const home = getPieceHome(context.piece);
-    if (!home || game.board[home.row][home.col]) {
-      appendToLatestMove(game, "，功成身退，出生位置被占暂留原位");
+    const retirePoint = getRandomEmptyPointForSide(game.board, context.piece.side);
+    if (!retirePoint) {
+      appendToLatestMove(game, "，功成身退，暂无非九宫空位暂留原位");
       return;
     }
 
     game.board[context.to.row][context.to.col] = null;
-    elephant.home = home;
     delete elephant.stealthed;
-    game.board[home.row][home.col] = elephant;
+    game.board[retirePoint.row][retirePoint.col] = elephant;
     if (game.lastMove) {
-      game.lastMove.to = { ...home };
+      game.lastMove.to = { ...retirePoint };
       game.lastMove.mode = "elephant-retire";
     }
-    appendToLatestMove(game, `，功成身退闪回 ${formatPoint(home)}`);
+    appendToLatestMove(game, `，功成身退，随机回到 ${formatPoint(retirePoint)}`);
+  }
+
+  function rerouteCavalryCapture(game, context, options) {
+    const cavalry = context.target;
+    if (
+      !cavalry ||
+      cavalry.type !== "cavalry" ||
+      !context.piece ||
+      cavalry.side === context.piece.side
+    ) {
+      return null;
+    }
+
+    const captured = createDeadSoldierFromCavalry(cavalry);
+    replaceLatestCaptured(game, context.piece.side, captured);
+    const dongfeng = options && options.mode === "dongfeng";
+
+    if (isAcrossRiver(cavalry.side, context.to.row)) {
+      const horse = createRecoveredHorse(cavalry, context.piece.side);
+      removePieceById(game.board, horse.id, context.to);
+      const point = placePieceRandomlyOnOwnSide(game.board, horse, context.piece.side);
+      replaceLatestMove(
+        game,
+        dongfeng
+          ? point
+            ? `东风炮 ${formatPoint(context.from)} → ${formatPoint(context.to)} 吃 骑兵后报废，缴获马随机出现在 ${formatPoint(point)}`
+            : `东风炮 ${formatPoint(context.from)} → ${formatPoint(context.to)} 吃 骑兵后报废，缴获马暂无非九宫空位落子`
+          : point
+            ? `${SYMBOLS[context.piece.side][context.piece.type]} ${formatPoint(context.from)} → ${formatPoint(context.to)} 吃 骑兵，缴获马随机出现在 ${formatPoint(point)}`
+            : `${SYMBOLS[context.piece.side][context.piece.type]} ${formatPoint(context.from)} → ${formatPoint(context.to)} 吃 骑兵，缴获马暂无非九宫空位落子`,
+      );
+      return { captured };
+    }
+
+    const horse = createHorseFromCavalry(cavalry);
+    removePieceById(game.board, horse.id, context.to);
+    const point = placePieceRandomlyOnOwnSide(game.board, horse, cavalry.side);
+    replaceLatestMove(
+      game,
+      dongfeng
+        ? point
+          ? `东风炮 ${formatPoint(context.from)} → ${formatPoint(context.to)} 吃 骑兵后报废，兵卒阵亡，马随机回到 ${formatPoint(point)}`
+          : `东风炮 ${formatPoint(context.from)} → ${formatPoint(context.to)} 吃 骑兵后报废，兵卒阵亡，马暂无非九宫空位落子`
+        : point
+          ? `${SYMBOLS[context.piece.side][context.piece.type]} ${formatPoint(context.from)} → ${formatPoint(context.to)} 吃 骑兵，兵卒阵亡，马随机回到 ${formatPoint(point)}`
+          : `${SYMBOLS[context.piece.side][context.piece.type]} ${formatPoint(context.from)} → ${formatPoint(context.to)} 吃 骑兵，兵卒阵亡，马暂无非九宫空位落子`,
+    );
+    return { captured };
   }
 
   function isExtraCavalryMove(game, from, to, options) {
@@ -201,16 +253,12 @@
     let finalPoint = { ...validTo };
     if (returningHome) {
       movedPiece = createHorseFromCavalry(piece);
-      const home = getPieceHome(movedPiece);
-      const homeOpen = home && !nextGame.board[home.row][home.col];
-      if (homeOpen) {
-        nextGame.board[home.row][home.col] = movedPiece;
-        finalPoint = { ...home };
-      } else {
-        nextGame.board[validTo.row][validTo.col] = movedPiece;
+      const retreatPoint = placePieceRandomlyOnOwnSide(nextGame.board, movedPiece, piece.side);
+      if (retreatPoint) {
+        finalPoint = { ...retreatPoint };
       }
       mode = "cavalry-return";
-      text += `，退回己方半场，兵受军法处置，马${homeOpen ? `回归 ${formatPoint(home)}` : "暂留退回位置"}`;
+      text += `，退回己方半场，兵受军法处置，马${retreatPoint ? `随机回到 ${formatPoint(retreatPoint)}` : "暂无非九宫空位落子"}`;
     } else {
       nextGame.board[validTo.row][validTo.col] = movedPiece;
       text += "，过河骑兵后退";
@@ -418,6 +466,23 @@
     };
   }
 
+  function createRecoveredHorse(cavalry, capturingSide) {
+    return {
+      id: `${capturingSide}-captured-${cavalry.horseId || cavalry.id}`,
+      side: capturingSide,
+      type: "horse",
+      recoveredFrom: cavalry.side,
+    };
+  }
+
+  function createDeadSoldierFromCavalry(cavalry) {
+    return {
+      id: cavalry.soldierId || `${cavalry.id}-soldier`,
+      side: cavalry.side,
+      type: "soldier",
+    };
+  }
+
   function ensurePieceHomes(game) {
     if (!game || !game.board) {
       return;
@@ -500,6 +565,37 @@
     }
   }
 
+  function replaceLatestMove(game, text) {
+    if (game.moveLog && game.moveLog[0]) {
+      game.moveLog[0].text = text;
+    }
+  }
+
+  function replaceLatestCaptured(game, side, captured) {
+    if (!game.captured || !Array.isArray(game.captured[side]) || !game.captured[side].length) {
+      return;
+    }
+    game.captured[side][game.captured[side].length - 1] = { ...captured };
+  }
+
+  function removePieceById(board, pieceId, exceptPoint) {
+    if (!pieceId) {
+      return;
+    }
+
+    for (let row = 0; row < ROWS; row += 1) {
+      for (let col = 0; col < COLS; col += 1) {
+        if (exceptPoint && exceptPoint.row === row && exceptPoint.col === col) {
+          continue;
+        }
+        const piece = board[row] && board[row][col];
+        if (piece && piece.id === pieceId) {
+          board[row][col] = null;
+        }
+      }
+    }
+  }
+
   function normalizePoint(point) {
     if (!point) {
       return null;
@@ -515,6 +611,44 @@
 
   function isInside(row, col) {
     return row >= 0 && row < ROWS && col >= 0 && col < COLS;
+  }
+
+  function isInPalace(side, row, col) {
+    if (col < 3 || col > 5) {
+      return false;
+    }
+    return side === "red" ? row >= 7 && row <= 9 : row >= 0 && row <= 2;
+  }
+
+  function getRandomEmptyPointForSide(board, side) {
+    const points = [];
+    for (let row = 0; row < ROWS; row += 1) {
+      if (!staysOnOwnSide(side, row)) {
+        continue;
+      }
+
+      for (let col = 0; col < COLS; col += 1) {
+        if (!isInPalace(side, row, col) && !board[row][col]) {
+          points.push({ row, col });
+        }
+      }
+    }
+
+    if (!points.length) {
+      return null;
+    }
+
+    return points[Math.floor(Math.random() * points.length)];
+  }
+
+  function placePieceRandomlyOnOwnSide(board, piece, side = piece.side) {
+    const point = getRandomEmptyPointForSide(board, side);
+    if (!point) {
+      return null;
+    }
+
+    board[point.row][point.col] = piece;
+    return point;
   }
 
   function staysOnOwnSide(side, row) {
