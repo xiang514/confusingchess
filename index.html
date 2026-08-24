@@ -13,24 +13,6 @@
           <p class="eyebrow">魔改象棋 · 线上双人对弈</p>
           <h1>Confusing Chess</h1>
         </div>
-        <div class="actions" aria-label="对局操作">
-          <button id="dongfengBtn" class="tool-button special" type="button" title="东风炮" aria-label="东风炮">
-            <span aria-hidden="true">炮</span>
-            <span>东风炮</span>
-          </button>
-          <button id="mountBtn" class="tool-button special" type="button" title="翻身上马" aria-label="翻身上马">
-            <span aria-hidden="true">马</span>
-            <span>翻身上马</span>
-          </button>
-          <button id="undoBtn" class="tool-button" type="button" title="悔棋" aria-label="悔棋">
-            <span aria-hidden="true">↶</span>
-            <span>悔棋</span>
-          </button>
-          <button id="resetBtn" class="tool-button primary" type="button" title="重新开始" aria-label="重新开始">
-            <span aria-hidden="true">↻</span>
-            <span>重新开始</span>
-          </button>
-        </div>
       </header>
 
       <section class="connect-panel" aria-label="连接房间">
@@ -91,6 +73,25 @@
                 <small id="blackMeta">黑方</small>
               </span>
             </div>
+          </div>
+
+          <div class="actions board-actions" aria-label="对局操作">
+            <button id="dongfengBtn" class="tool-button special" type="button" title="东风炮" aria-label="东风炮">
+              <span aria-hidden="true">炮</span>
+              <span>东风炮</span>
+            </button>
+            <button id="mountBtn" class="tool-button special" type="button" title="翻身上马" aria-label="翻身上马">
+              <span aria-hidden="true">马</span>
+              <span>翻身上马</span>
+            </button>
+            <button id="undoBtn" class="tool-button" type="button" title="悔棋" aria-label="悔棋">
+              <span aria-hidden="true">↶</span>
+              <span class="button-text">悔棋</span>
+            </button>
+            <button id="resetBtn" class="tool-button primary" type="button" title="重新开始" aria-label="重新开始">
+              <span aria-hidden="true">↻</span>
+              <span>重新开始</span>
+            </button>
           </div>
 
           <div id="board" class="board" role="application" aria-label="中国象棋棋盘">

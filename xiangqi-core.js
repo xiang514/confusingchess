@@ -30,6 +30,7 @@
       advisor: "仕",
       elephant: "相",
       horse: "傌",
+      cavalry: "骑兵",
       rook: "俥",
       cannon: "炮",
       soldier: "兵",
@@ -40,6 +41,7 @@
       advisor: "士",
       elephant: "象",
       horse: "馬",
+      cavalry: "骑兵",
       rook: "車",
       cannon: "砲",
       soldier: "卒",
@@ -52,6 +54,7 @@
     advisor: "士仕",
     elephant: "象相",
     horse: "马",
+    cavalry: "骑兵",
     rook: "车",
     cannon: "炮",
     soldier: "兵卒",
@@ -61,10 +64,22 @@
 
   function createInitialBoard() {
     const board = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+    const soldiers = {
+      red: [],
+      black: [],
+    };
     let pieceId = 0;
     const set = (row, col, side, type) => {
       pieceId += 1;
-      board[row][col] = { id: `${side}-${type}-${pieceId}`, side, type };
+      const piece = { id: `${side}-${type}-${pieceId}`, side, type };
+      if (type === "horse") {
+        piece.home = { row, col };
+      }
+      board[row][col] = piece;
+      if (type === "soldier") {
+        soldiers[side].push(piece);
+      }
+      return piece;
     };
 
     const backRank = ["rook", "horse", "elephant", "advisor", "king", "advisor", "elephant", "horse", "rook"];
@@ -78,7 +93,18 @@
     set(7, 7, "red", "cannon");
     [0, 2, 4, 6, 8].forEach((col) => set(6, col, "red", "soldier"));
 
+    markRandomFlatFooted(soldiers.red);
+    markRandomFlatFooted(soldiers.black);
+
     return board;
+  }
+
+  function markRandomFlatFooted(pieces) {
+    if (!pieces.length) {
+      return;
+    }
+    const index = Math.floor(Math.random() * pieces.length);
+    pieces[index].flatFooted = true;
   }
 
   function createInitialGame() {
@@ -100,8 +126,8 @@
 
   function createInitialSpecials() {
     return {
-      red: { dongfengUsed: false },
-      black: { dongfengUsed: false },
+      red: { dongfengUsed: false, lastPieceId: null, undoUsed: 0 },
+      black: { dongfengUsed: false, lastPieceId: null, undoUsed: 0 },
     };
   }
 
@@ -131,30 +157,103 @@
       return applyDongfengMove(nextGame, validFrom, validTo, piece);
     }
 
-    const legalTarget = getLegalMovesForPiece(nextGame.board, validFrom.row, validFrom.col)
+    const legalTarget = getLegalMovesForPiece(nextGame, validFrom.row, validFrom.col)
       .find((move) => move.row === validTo.row && move.col === validTo.col);
     if (!legalTarget) {
       return { ok: false, error: "不符合棋规" };
     }
 
-    const captured = nextGame.board[validTo.row][validTo.col];
-    nextGame.board[validTo.row][validTo.col] = piece;
-    nextGame.board[validFrom.row][validFrom.col] = null;
+    const moveResult = applyStandardMoveToBoard(nextGame, validFrom, validTo, piece, legalTarget);
+    if (!moveResult.ok) {
+      return { ok: false, error: moveResult.error };
+    }
+
     nextGame.lastMove = {
       from: { ...validFrom },
       to: { ...validTo },
+      mode: moveResult.mode,
+      pieceId: moveResult.movedPiece.id,
+      side: piece.side,
     };
+    nextGame.specials[piece.side].lastPieceId = moveResult.movedPiece.id;
 
-    if (captured) {
-      nextGame.captured[piece.side].push({ ...captured });
+    if (moveResult.captured) {
+      nextGame.captured[piece.side].push({ ...moveResult.captured });
     }
 
     nextGame.moveLog.unshift({
       side: piece.side,
-      text: formatMove(piece, validFrom, validTo, captured),
+      text: moveResult.text,
     });
 
-    return finishTurn(nextGame, piece.side, captured);
+    return finishTurn(nextGame, piece.side, moveResult.captured);
+  }
+
+  function applyStandardMoveToBoard(game, from, to, piece, legalTarget) {
+    const target = game.board[to.row][to.col];
+
+    if (legalTarget.combine) {
+      const cavalry = createCavalry(piece, target);
+      game.board[to.row][to.col] = cavalry;
+      game.board[from.row][from.col] = null;
+      return {
+        ok: true,
+        mode: "combine",
+        movedPiece: cavalry,
+        captured: null,
+        text: `${SYMBOLS[piece.side][piece.type]} ${formatPoint(from)} → ${formatPoint(to)} 与 ${SYMBOLS[target.side][target.type]} 合成骑兵`,
+      };
+    }
+
+    if (target && shouldCaptureCavalryAsHorse(target, to.row, piece)) {
+      if (isRoyal(piece)) {
+        return { ok: false, error: "将帅不能缴获骑兵" };
+      }
+
+      const deadSoldier = createDeadSoldierFromCavalry(target);
+      const movedPiece = prepareMovedPiece(piece, to.row);
+      game.board[to.row][to.col] = movedPiece;
+      game.board[from.row][from.col] = null;
+      const recoveredPoint = placeRecoveredHorseRandomly(game.board, target, piece.side);
+      return {
+        ok: true,
+        mode: "recover-horse",
+        movedPiece,
+        captured: deadSoldier,
+        text: recoveredPoint
+          ? `${SYMBOLS[piece.side][piece.type]} ${formatPoint(from)} → ${formatPoint(to)} 吃 骑兵，缴获马随机出现在 ${formatPoint(recoveredPoint)}`
+          : `${SYMBOLS[piece.side][piece.type]} ${formatPoint(from)} → ${formatPoint(to)} 吃 骑兵，缴获马暂无空位落子`,
+      };
+    }
+
+    if (target && shouldCavalryHorseEscape(game.board, target, to, from, true)) {
+      const escapedHorse = createEscapedHorse(target);
+      const deadSoldier = createDeadSoldierFromCavalry(target);
+      const escapeHome = getCavalryEscapeHome(game.board, target, to, from, true);
+      const movedPiece = prepareMovedPiece(piece, to.row);
+      game.board[to.row][to.col] = movedPiece;
+      game.board[from.row][from.col] = null;
+      game.board[escapeHome.row][escapeHome.col] = escapedHorse;
+      return {
+        ok: true,
+        mode: "cavalry-escape",
+        movedPiece,
+        captured: deadSoldier,
+        text: `${SYMBOLS[piece.side][piece.type]} ${formatPoint(from)} → ${formatPoint(to)} 吃 骑兵，兵卒阵亡，马逃回初始位置`,
+      };
+    }
+
+    const captured = target || null;
+    const movedPiece = prepareMovedPiece(piece, to.row);
+    game.board[to.row][to.col] = movedPiece;
+    game.board[from.row][from.col] = null;
+    return {
+      ok: true,
+      mode: null,
+      movedPiece,
+      captured,
+      text: formatMove(movedPiece, from, to, captured),
+    };
   }
 
   function applyDongfengMove(nextGame, from, to, piece) {
@@ -172,19 +271,41 @@
       return { ok: false, error: "东风炮只能直线吃到目标，不能空走" };
     }
 
-    const captured = nextGame.board[to.row][to.col];
+    const capturedTarget = nextGame.board[to.row][to.col];
+    const shouldRecoverHorse = shouldCaptureCavalryAsHorse(capturedTarget, to.row, piece);
+    const escapeHome = shouldRecoverHorse
+      ? null
+      : getCavalryEscapeHome(nextGame.board, capturedTarget, to, from, false);
+    const escapedHorse = escapeHome ? createEscapedHorse(capturedTarget) : null;
+    const captured = shouldRecoverHorse || escapedHorse ? createDeadSoldierFromCavalry(capturedTarget) : capturedTarget;
+
     nextGame.board[from.row][from.col] = null;
     nextGame.board[to.row][to.col] = null;
+    const recoveredPoint = shouldRecoverHorse
+      ? placeRecoveredHorseRandomly(nextGame.board, capturedTarget, piece.side)
+      : null;
+    if (escapedHorse) {
+      nextGame.board[escapeHome.row][escapeHome.col] = escapedHorse;
+    }
     nextGame.specials[piece.side].dongfengUsed = true;
+    nextGame.specials[piece.side].lastPieceId = piece.id;
     nextGame.lastMove = {
       from: { ...from },
       to: { ...to },
       mode: "dongfeng",
+      pieceId: piece.id,
+      side: piece.side,
     };
     nextGame.captured[piece.side].push({ ...captured });
     nextGame.moveLog.unshift({
       side: piece.side,
-      text: `东风炮 ${formatPoint(from)} → ${formatPoint(to)} 吃 ${SYMBOLS[captured.side][captured.type]} 后报废`,
+      text: shouldRecoverHorse
+        ? recoveredPoint
+          ? `东风炮 ${formatPoint(from)} → ${formatPoint(to)} 吃 骑兵后报废，缴获马随机出现在 ${formatPoint(recoveredPoint)}`
+          : `东风炮 ${formatPoint(from)} → ${formatPoint(to)} 吃 骑兵后报废，缴获马暂无空位落子`
+        : escapedHorse
+          ? `东风炮 ${formatPoint(from)} → ${formatPoint(to)} 吃 骑兵后报废，兵卒阵亡，马逃回初始位置`
+        : `东风炮 ${formatPoint(from)} → ${formatPoint(to)} 吃 ${SYMBOLS[captured.side][captured.type]} 后报废`,
     });
 
     return finishTurn(nextGame, piece.side, captured);
@@ -224,7 +345,10 @@
       from: { ...mountOption.king },
       to: { ...validHorse },
       mode: "mount",
+      pieceId: royal.id,
+      side,
     };
+    nextGame.specials[side].lastPieceId = royal.id;
     nextGame.moveLog.unshift({
       side,
       text: `翻身上马 ${SYMBOLS[side].king} ${formatPoint(mountOption.king)} → ${formatPoint(validHorse)}`,
@@ -272,18 +396,38 @@
     return { ok: true, game: nextGame, captured };
   }
 
-  function getLegalMovesForPiece(board, row, col) {
+  function getLegalMovesForPiece(gameOrBoard, row, col) {
+    const game = Array.isArray(gameOrBoard) ? null : gameOrBoard;
+    const board = game ? game.board : gameOrBoard;
     const piece = board[row] && board[row][col];
     if (!piece) {
       return [];
     }
 
-    return getPseudoMoves(board, row, col).filter((move) => {
-      const nextBoard = cloneBoard(board);
-      nextBoard[move.row][move.col] = nextBoard[row][col];
-      nextBoard[row][col] = null;
+    if (isFlatFootedBlocked(game, piece)) {
+      return [];
+    }
+
+    return getPlayerMoves(board, row, col).filter((move) => {
+      const nextBoard = createBoardAfterMove(board, row, col, move.row, move.col);
+      if (!nextBoard) {
+        return false;
+      }
       return !isInCheck(nextBoard, piece.side);
     });
+  }
+
+  function getPlayerMoves(board, row, col) {
+    const piece = board[row] && board[row][col];
+    if (!piece) {
+      return [];
+    }
+
+    const moves = getPseudoMoves(board, row, col);
+    if (piece.type === "horse") {
+      moves.push(...getHorseCombineMoves(board, row, col, piece.side));
+    }
+    return moves;
   }
 
   function getPseudoMoves(board, row, col) {
@@ -303,6 +447,8 @@
         return getElephantMoves(board, row, col, piece.side);
       case "horse":
         return getHorseMoves(board, row, col, piece.side);
+      case "cavalry":
+        return getCavalryMoves(board, row, col, piece.side);
       case "rook":
         return getRookMoves(board, row, col, piece.side);
       case "cannon":
@@ -350,6 +496,11 @@
   }
 
   function getElephantMoves(board, row, col, side) {
+    const piece = board[row] && board[row][col];
+    if (isElephantStealthed(piece, row)) {
+      return getStealthedElephantMoves(board, row, col, side);
+    }
+
     const moves = [];
     [
       [-2, -2],
@@ -368,6 +519,19 @@
     return moves;
   }
 
+  function getStealthedElephantMoves(board, row, col, side) {
+    const moves = [];
+    [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+    ].forEach(([dr, dc]) => {
+      pushMoveIfAvailable(moves, board, row + dr, col + dc, side);
+    });
+    return moves;
+  }
+
   function getHorseMoves(board, row, col, side) {
     const moves = [];
     getHorsePatterns().forEach(([dr, dc, blockRow, blockCol]) => {
@@ -381,6 +545,51 @@
         pushMoveIfAvailable(moves, board, nextRow, nextCol, side);
       }
     });
+    return moves;
+  }
+
+  function getHorseCombineMoves(board, row, col, side) {
+    const moves = [];
+    getHorsePatterns().forEach(([dr, dc, blockRow, blockCol]) => {
+      const nextRow = row + dr;
+      const nextCol = col + dc;
+      if (
+        isInside(nextRow, nextCol) &&
+        staysOnOwnSide(side, nextRow) &&
+        !board[row + blockRow][col + blockCol]
+      ) {
+        const target = board[nextRow][nextCol];
+        if (target && target.side === side && target.type === "soldier") {
+          moves.push({ row: nextRow, col: nextCol, capture: false, combine: true });
+        }
+      }
+    });
+    return moves;
+  }
+
+  function getCavalryMoves(board, row, col, side) {
+    const moves = [];
+    getHorsePatterns().forEach(([dr, dc, blockRow, blockCol]) => {
+      const nextRow = row + dr;
+      const nextCol = col + dc;
+      if (
+        isInside(nextRow, nextCol) &&
+        isForwardOrSideways(side, row, nextRow) &&
+        !board[row + blockRow][col + blockCol]
+      ) {
+        pushMoveIfAvailable(moves, board, nextRow, nextCol, side);
+      }
+    });
+
+    const forward = side === "red" ? -1 : 1;
+    [
+      [forward, 0],
+      [0, -1],
+      [0, 1],
+    ].forEach(([dr, dc]) => {
+      pushMoveIfAvailable(moves, board, row + dr, col + dc, side);
+    });
+
     return moves;
   }
 
@@ -465,9 +674,7 @@
         const target = board[nextRow][nextCol];
         if (target) {
           if (target.side !== piece.side) {
-            const nextBoard = cloneBoard(board);
-            nextBoard[row][col] = null;
-            nextBoard[nextRow][nextCol] = null;
+            const nextBoard = createBoardAfterDongfengCapture(board, row, col, nextRow, nextCol);
             if (!isInCheck(nextBoard, piece.side)) {
               moves.push({ row: nextRow, col: nextCol, capture: true, mode: "dongfeng" });
             }
@@ -481,6 +688,23 @@
     });
 
     return moves;
+  }
+
+  function createBoardAfterDongfengCapture(board, fromRow, fromCol, toRow, toCol) {
+    const nextBoard = cloneBoard(board);
+    const cannon = nextBoard[fromRow][fromCol];
+    const target = nextBoard[toRow][toCol];
+    const shouldRecoverHorse = shouldCaptureCavalryAsHorse(target, toRow, cannon);
+    const escapeHome = shouldRecoverHorse
+      ? null
+      : getCavalryEscapeHome(nextBoard, target, { row: toRow, col: toCol }, { row: fromRow, col: fromCol }, false);
+    const escapedHorse = escapeHome ? createEscapedHorse(target) : null;
+    nextBoard[fromRow][fromCol] = null;
+    nextBoard[toRow][toCol] = null;
+    if (escapedHorse) {
+      nextBoard[escapeHome.row][escapeHome.col] = escapedHorse;
+    }
+    return nextBoard;
   }
 
   function getSoldierMoves(board, row, col, side) {
@@ -547,6 +771,205 @@
     });
   }
 
+  function createBoardAfterMove(board, fromRow, fromCol, toRow, toCol) {
+    const movingPiece = board[fromRow] && board[fromRow][fromCol];
+    if (!movingPiece) {
+      return null;
+    }
+
+    const target = board[toRow] && board[toRow][toCol];
+    const nextBoard = cloneBoard(board);
+    const moving = nextBoard[fromRow][fromCol];
+    const nextTarget = nextBoard[toRow][toCol];
+
+    if (moving.type === "horse" && nextTarget && nextTarget.side === moving.side && nextTarget.type === "soldier") {
+      nextBoard[toRow][toCol] = createCavalry(moving, nextTarget);
+      nextBoard[fromRow][fromCol] = null;
+      return nextBoard;
+    }
+
+    if (nextTarget && shouldCaptureCavalryAsHorse(nextTarget, toRow, moving)) {
+      if (isRoyal(moving)) {
+        return null;
+      }
+      nextBoard[toRow][toCol] = prepareMovedPiece(moving, toRow);
+      nextBoard[fromRow][fromCol] = null;
+      return nextBoard;
+    }
+
+    if (
+      nextTarget &&
+      shouldCavalryHorseEscape(
+        nextBoard,
+        nextTarget,
+        { row: toRow, col: toCol },
+        { row: fromRow, col: fromCol },
+        true,
+      )
+    ) {
+      const escapeHome = getCavalryEscapeHome(
+        nextBoard,
+        nextTarget,
+        { row: toRow, col: toCol },
+        { row: fromRow, col: fromCol },
+        true,
+      );
+      const escapedHorse = createEscapedHorse(nextTarget);
+      nextBoard[toRow][toCol] = prepareMovedPiece(moving, toRow);
+      nextBoard[fromRow][fromCol] = null;
+      nextBoard[escapeHome.row][escapeHome.col] = escapedHorse;
+      return nextBoard;
+    }
+
+    nextBoard[toRow][toCol] = prepareMovedPiece(moving, toRow);
+    nextBoard[fromRow][fromCol] = null;
+    return nextBoard;
+  }
+
+  function createCavalry(horse, soldier) {
+    return {
+      id: `${horse.id}+${soldier.id}`,
+      side: horse.side,
+      type: "cavalry",
+      horseId: horse.id,
+      soldierId: soldier.id,
+      horseHome: clonePoint(horse.home || inferHorseHome(horse)),
+    };
+  }
+
+  function prepareMovedPiece(piece, targetRow) {
+    const movedPiece = { ...piece };
+    if (movedPiece.type === "elephant") {
+      if (isElephantStealthed(movedPiece, targetRow)) {
+        movedPiece.stealthed = true;
+      } else {
+        delete movedPiece.stealthed;
+      }
+    }
+    return movedPiece;
+  }
+
+  function shouldCaptureCavalryAsHorse(target, targetRow, movingPiece) {
+    return Boolean(
+      target &&
+      movingPiece &&
+      target.type === "cavalry" &&
+      target.side !== movingPiece.side &&
+      isAcrossRiver(target.side, targetRow),
+    );
+  }
+
+  function shouldCavalryHorseEscape(board, target, targetPoint, sourcePoint, targetOccupiedAfterCapture) {
+    return Boolean(getCavalryEscapeHome(board, target, targetPoint, sourcePoint, targetOccupiedAfterCapture));
+  }
+
+  function getCavalryEscapeHome(board, target, targetPoint, sourcePoint, targetOccupiedAfterCapture) {
+    if (!target || target.type !== "cavalry" || isAcrossRiver(target.side, targetPoint.row)) {
+      return null;
+    }
+
+    const home = clonePoint(target.horseHome || inferHorseHome({ id: target.horseId, side: target.side, type: "horse" }));
+    if (!home || !isInside(home.row, home.col)) {
+      return null;
+    }
+
+    if (targetOccupiedAfterCapture && home.row === targetPoint.row && home.col === targetPoint.col) {
+      return null;
+    }
+
+    const occupant = board[home.row] && board[home.row][home.col];
+    if (!occupant || (home.row === sourcePoint.row && home.col === sourcePoint.col)) {
+      return home;
+    }
+
+    return null;
+  }
+
+  function placeRecoveredHorseRandomly(board, cavalry, capturingSide) {
+    const point = getRandomEmptyPointForSide(board, capturingSide);
+    if (!point) {
+      return null;
+    }
+
+    const horse = createRecoveredHorse(cavalry, capturingSide);
+    horse.home = { ...point };
+    board[point.row][point.col] = horse;
+    return point;
+  }
+
+  function getRandomEmptyPointForSide(board, side) {
+    const points = [];
+    for (let row = 0; row < ROWS; row += 1) {
+      if (!staysOnOwnSide(side, row)) {
+        continue;
+      }
+      for (let col = 0; col < COLS; col += 1) {
+        if (!board[row][col]) {
+          points.push({ row, col });
+        }
+      }
+    }
+
+    if (!points.length) {
+      return null;
+    }
+
+    return points[Math.floor(Math.random() * points.length)];
+  }
+
+  function createRecoveredHorse(cavalry, capturingSide) {
+    return {
+      id: `${capturingSide}-captured-${cavalry.horseId || cavalry.id}`,
+      side: capturingSide,
+      type: "horse",
+      recoveredFrom: cavalry.side,
+    };
+  }
+
+  function createEscapedHorse(cavalry) {
+    const home = clonePoint(cavalry.horseHome || inferHorseHome({ id: cavalry.horseId, side: cavalry.side, type: "horse" }));
+    return {
+      id: cavalry.horseId || `${cavalry.id}-horse`,
+      side: cavalry.side,
+      type: "horse",
+      home,
+    };
+  }
+
+  function createDeadSoldierFromCavalry(cavalry) {
+    return {
+      id: cavalry.soldierId || `${cavalry.id}-soldier`,
+      side: cavalry.side,
+      type: "soldier",
+    };
+  }
+
+  function inferHorseHome(piece) {
+    if (!piece || piece.type !== "horse" || !piece.id) {
+      return null;
+    }
+
+    const defaults = {
+      "black-horse-2": { row: 0, col: 1 },
+      "black-horse-8": { row: 0, col: 7 },
+      "red-horse-19": { row: 9, col: 1 },
+      "red-horse-25": { row: 9, col: 7 },
+    };
+    return clonePoint(defaults[piece.id]);
+  }
+
+  function clonePoint(point) {
+    if (!point) {
+      return null;
+    }
+    const row = Number(point.row);
+    const col = Number(point.col);
+    if (!Number.isInteger(row) || !Number.isInteger(col)) {
+      return null;
+    }
+    return { row, col };
+  }
+
   function pushLineMove(moves, target, row, col, side) {
     if (!target) {
       moves.push({ row, col, capture: false });
@@ -599,7 +1022,7 @@
     for (let row = 0; row < ROWS; row += 1) {
       for (let col = 0; col < COLS; col += 1) {
         const piece = board[row][col];
-        if (piece && piece.side === side && getLegalMovesForPiece(board, row, col).length > 0) {
+        if (piece && piece.side === side && getLegalMovesForPiece(game, row, col).length > 0) {
           return true;
         }
       }
@@ -675,6 +1098,18 @@
     return (side === "red" || side === "black") && !specials[side].dongfengUsed;
   }
 
+  function isFlatFootedBlocked(game, piece) {
+    if (!game || !piece || piece.type !== "soldier" || !piece.flatFooted) {
+      return false;
+    }
+    const specials = normalizeSpecials(game.specials);
+    return specials[piece.side].lastPieceId === piece.id;
+  }
+
+  function isElephantStealthed(piece, row) {
+    return Boolean(piece && piece.type === "elephant" && isAcrossRiver(piece.side, row));
+  }
+
   function normalizePoint(point) {
     if (!point) {
       return null;
@@ -706,12 +1141,28 @@
     return side === "red" ? row <= 4 : row >= 5;
   }
 
+  function isAcrossRiver(side, row) {
+    return hasCrossedRiver(side, row);
+  }
+
+  function isForwardOrSideways(side, fromRow, toRow) {
+    return side === "red" ? toRow <= fromRow : toRow >= fromRow;
+  }
+
   function oppositeSide(side) {
     return side === "red" ? "black" : "red";
   }
 
   function cloneBoard(board) {
-    return board.map((row) => row.map((piece) => (piece ? { ...piece } : null)));
+    return board.map((row) => row.map((piece) => (piece ? clonePiece(piece) : null)));
+  }
+
+  function clonePiece(piece) {
+    return {
+      ...piece,
+      home: clonePoint(piece.home),
+      horseHome: clonePoint(piece.horseHome),
+    };
   }
 
   function cloneMove(move) {
@@ -722,6 +1173,8 @@
       from: { ...move.from },
       to: { ...move.to },
       mode: move.mode || null,
+      pieceId: move.pieceId || null,
+      side: move.side || null,
     };
   }
 
@@ -730,8 +1183,8 @@
       board: cloneBoard(game.board),
       currentSide: game.currentSide,
       captured: {
-        red: (game.captured && game.captured.red ? game.captured.red : []).map((piece) => ({ ...piece })),
-        black: (game.captured && game.captured.black ? game.captured.black : []).map((piece) => ({ ...piece })),
+        red: (game.captured && game.captured.red ? game.captured.red : []).map((piece) => clonePiece(piece)),
+        black: (game.captured && game.captured.black ? game.captured.black : []).map((piece) => clonePiece(piece)),
       },
       moveLog: (game.moveLog || []).map((entry) => ({ ...entry })),
       lastMove: cloneMove(game.lastMove),
@@ -744,9 +1197,25 @@
 
   function normalizeSpecials(specials) {
     return {
-      red: { dongfengUsed: Boolean(specials && specials.red && specials.red.dongfengUsed) },
-      black: { dongfengUsed: Boolean(specials && specials.black && specials.black.dongfengUsed) },
+      red: {
+        dongfengUsed: Boolean(specials && specials.red && specials.red.dongfengUsed),
+        lastPieceId: specials && specials.red ? specials.red.lastPieceId || null : null,
+        undoUsed: normalizeUndoCount(specials && specials.red && specials.red.undoUsed),
+      },
+      black: {
+        dongfengUsed: Boolean(specials && specials.black && specials.black.dongfengUsed),
+        lastPieceId: specials && specials.black ? specials.black.lastPieceId || null : null,
+        undoUsed: normalizeUndoCount(specials && specials.black && specials.black.undoUsed),
+      },
     };
+  }
+
+  function normalizeUndoCount(value) {
+    const count = Number(value || 0);
+    if (!Number.isFinite(count) || count < 0) {
+      return 0;
+    }
+    return Math.min(3, Math.floor(count));
   }
 
   function formatMove(piece, from, to, captured) {
@@ -764,7 +1233,15 @@
     if (!piece) {
       return `${point} 空位`;
     }
-    return `${point} ${SIDES[piece.side].label}${PIECE_NAMES[piece.type]}`;
+    const status = [];
+    if (isElephantStealthed(piece, row)) {
+      status.push("潜伏");
+    }
+    if (piece.flatFooted) {
+      status.push("扁平足");
+    }
+    const statusText = status.length ? ` · ${status.join(" · ")}` : "";
+    return `${point} ${SIDES[piece.side].label}${PIECE_NAMES[piece.type]}${statusText}`;
   }
 
   return {
@@ -791,6 +1268,7 @@
     formatMove,
     formatPoint,
     getCellLabel,
+    isElephantStealthed,
     normalizePoint,
     oppositeSide,
   };

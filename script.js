@@ -19,7 +19,11 @@ const {
   canUseDongfeng,
   cloneGame,
   getCellLabel,
+  isElephantStealthed,
+  oppositeSide,
 } = Core;
+
+const UNDO_LIMIT = 3;
 
 const supabaseClient = window.supabase
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
@@ -49,6 +53,7 @@ const elements = {
   moveCount: document.getElementById("moveCount"),
   resetBtn: document.getElementById("resetBtn"),
   undoBtn: document.getElementById("undoBtn"),
+  undoBtnText: document.querySelector("#undoBtn .button-text"),
   dongfengBtn: document.getElementById("dongfengBtn"),
   mountBtn: document.getElementById("mountBtn"),
   connectForm: document.getElementById("connectForm"),
@@ -205,11 +210,14 @@ function drawLine(ctx, x1, y1, x2, y2) {
 
 function renderBoardGrid() {
   elements.grid.innerHTML = "";
+  elements.board.classList.toggle("flipped", shouldFlipBoard());
   const targetSet = new Map(state.legalTargets.map((target) => [`${target.row},${target.col}`, target]));
   const game = state.game;
+  const rows = getDisplayIndexes(ROWS);
+  const cols = getDisplayIndexes(COLS);
 
-  for (let row = 0; row < ROWS; row += 1) {
-    for (let col = 0; col < COLS; col += 1) {
+  rows.forEach((row) => {
+    cols.forEach((col) => {
       const cell = document.createElement("button");
       const key = `${row},${col}`;
       const piece = game.board[row][col];
@@ -239,16 +247,35 @@ function renderBoardGrid() {
 
       if (piece) {
         const pieceEl = document.createElement("span");
-        pieceEl.className = `piece ${piece.side}${piece.type === "mountedKing" ? " mounted" : ""}`;
+        const pieceClasses = ["piece", piece.side];
+        if (piece.type === "mountedKing" || piece.type === "cavalry") {
+          pieceClasses.push("combined");
+        }
+        if (isElephantStealthed(piece, row)) {
+          pieceClasses.push("stealthed");
+        }
+        if (piece.flatFooted) {
+          pieceClasses.push("flat-footed");
+        }
+        pieceEl.className = pieceClasses.join(" ");
         pieceEl.textContent = SYMBOLS[piece.side][piece.type];
-        pieceEl.title = `${SIDES[piece.side].label}${PIECE_NAMES[piece.type]}`;
+        pieceEl.title = getCellLabel(row, col, piece);
         cell.appendChild(pieceEl);
       }
 
       cell.addEventListener("click", () => handleCellClick(row, col));
       elements.grid.appendChild(cell);
-    }
-  }
+    });
+  });
+}
+
+function shouldFlipBoard() {
+  return Boolean(state.connection.connected && state.connection.side === "black");
+}
+
+function getDisplayIndexes(count) {
+  const indexes = Array.from({ length: count }, (_, index) => index);
+  return shouldFlipBoard() ? indexes.reverse() : indexes;
 }
 
 function renderPanels() {
@@ -290,9 +317,15 @@ function renderPanels() {
     elements.moveLog.appendChild(item);
   });
 
-  elements.undoBtn.disabled = state.connection.connected
-    ? !state.connection.canUndo || state.connection.busy
-    : state.history.length === 0;
+  const undoDisplaySide = getUndoDisplaySide();
+  const undoRemaining = undoDisplaySide ? getUndoRemaining(undoDisplaySide) : UNDO_LIMIT;
+  if (elements.undoBtnText) {
+    elements.undoBtnText.textContent = `悔棋 ${undoRemaining}/${UNDO_LIMIT}`;
+  }
+  elements.undoBtn.title = undoDisplaySide
+    ? `${SIDES[undoDisplaySide].label}剩余 ${undoRemaining} 次悔棋`
+    : `每方 ${UNDO_LIMIT} 次悔棋`;
+  elements.undoBtn.disabled = !canCurrentUserUndo();
 
   const actorSide = getActorSide();
   const canAct = canCurrentUserAct();
@@ -353,7 +386,11 @@ function renderCaptured(container, pieces) {
 
   pieces.forEach((piece) => {
     const pieceEl = document.createElement("span");
-    pieceEl.className = `captured-piece ${piece.side}`;
+    const pieceClasses = ["captured-piece", piece.side];
+    if (piece.type === "mountedKing" || piece.type === "cavalry") {
+      pieceClasses.push("combined");
+    }
+    pieceEl.className = pieceClasses.join(" ");
     pieceEl.textContent = SYMBOLS[piece.side][piece.type];
     pieceEl.title = `${SIDES[piece.side].label}${PIECE_NAMES[piece.type]}`;
     container.appendChild(pieceEl);
@@ -433,7 +470,7 @@ function selectPiece(row, col) {
     return;
   }
 
-  const moves = getLegalMovesForPiece(state.game.board, row, col);
+  const moves = getLegalMovesForPiece(state.game, row, col);
   state.selected = { row, col };
   state.legalTargets = moves;
   state.notice = moves.length
@@ -594,6 +631,58 @@ function getActorSide() {
   return state.connection.connected ? state.connection.side : state.game.currentSide;
 }
 
+function getUndoDisplaySide() {
+  if (state.connection.connected) {
+    return state.connection.side;
+  }
+  return getUndoActorSide() || state.game.currentSide;
+}
+
+function getUndoActorSide() {
+  const lastMoveSide = state.game.lastMove && state.game.lastMove.side;
+  if (!lastMoveSide) {
+    return null;
+  }
+
+  if (state.connection.connected) {
+    return state.connection.side === lastMoveSide ? state.connection.side : null;
+  }
+
+  return lastMoveSide;
+}
+
+function getUndoRemaining(side) {
+  return Math.max(0, UNDO_LIMIT - getUndoUsed(side));
+}
+
+function getUndoUsed(side) {
+  const sideSpecials = state.game.specials && state.game.specials[side];
+  const count = Number(sideSpecials && sideSpecials.undoUsed);
+  return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+}
+
+function canCurrentUserUndo() {
+  if (state.connection.busy || state.history.length === 0) {
+    return false;
+  }
+
+  const actorSide = getUndoActorSide();
+  if (!actorSide || getUndoRemaining(actorSide) <= 0) {
+    return false;
+  }
+
+  const waitingForOpponent = state.game.gameOver || state.game.currentSide === oppositeSide(actorSide);
+  return waitingForOpponent;
+}
+
+function buildUndoGame(previousGame, actorSide) {
+  const undoGame = cloneGame(previousGame);
+  const currentUsed = getUndoUsed(actorSide);
+  undoGame.specials[actorSide].undoUsed = Math.min(UNDO_LIMIT, currentUsed + 1);
+  undoGame.status = `${SIDES[actorSide].label}悔棋，请重新走棋`;
+  return undoGame;
+}
+
 function canCurrentUserAct() {
   if (state.game.gameOver || state.connection.busy) {
     return false;
@@ -629,14 +718,16 @@ function hasDongfengTarget(side) {
 }
 
 async function undoMove() {
+  const actorSide = getUndoActorSide();
+  if (!canCurrentUserUndo() || !actorSide) {
+    state.notice = getUndoBlockedMessage(actorSide);
+    renderPanels();
+    return;
+  }
+
   if (state.connection.connected) {
     const previousGame = state.history[state.history.length - 1];
-    if (!previousGame) {
-      state.notice = "没有可悔的棋";
-      renderPanels();
-      return;
-    }
-    await saveRoomState(previousGame, state.history.slice(0, -1), "正在悔棋");
+    await saveRoomState(buildUndoGame(previousGame, actorSide), state.history.slice(0, -1), "正在悔棋");
     return;
   }
 
@@ -645,9 +736,25 @@ async function undoMove() {
     return;
   }
 
-  state.game = snapshot;
+  state.game = buildUndoGame(snapshot, actorSide);
   clearSelection();
   render();
+}
+
+function getUndoBlockedMessage(actorSide) {
+  if (state.history.length === 0) {
+    return "没有可悔的棋";
+  }
+
+  if (actorSide && getUndoRemaining(actorSide) <= 0) {
+    return `${SIDES[actorSide].label}本局 3 次悔棋已经用完`;
+  }
+
+  if (state.connection.connected && state.game.lastMove && state.game.lastMove.side !== state.connection.side) {
+    return "只能悔自己刚走的上一手";
+  }
+
+  return "只能在自己刚走完、对方还没走时悔棋";
 }
 
 async function resetGame() {
@@ -763,13 +870,13 @@ async function enterRoom(authValues) {
   state.notice = "";
 
   await stopRealtime();
-  await refreshRoom();
+  const room = await refreshRoom();
   await refreshMembers();
   startRealtime(seat.room_id);
   setConnectionStatus("已连接", "online");
 
-  if (!state.game || !state.game.board) {
-    await saveRoomState(createInitialGame(), [], "初始化棋局");
+  if (!room || !room.game_state) {
+    await saveRoomState(state.game || createInitialGame(), [], "初始化棋局");
   }
   render();
 }
@@ -890,6 +997,7 @@ async function refreshRoom() {
   }
 
   applyRemoteRoom(data);
+  return data;
 }
 
 async function refreshMembers() {
@@ -918,7 +1026,7 @@ function applyRemoteRoom(room) {
   state.game = normalizeGame(room.game_state);
   state.history = Array.isArray(room.history) ? room.history : [];
   state.connection.revision = Number(room.revision || 0);
-  state.connection.canUndo = state.history.length > 0;
+  state.connection.canUndo = canCurrentUserUndo();
   state.selected = null;
   state.legalTargets = [];
   state.specialMode = null;
@@ -1045,6 +1153,7 @@ function firstRow(data) {
 function setBusy(isBusy) {
   state.connection.busy = isBusy;
   renderConnectionPanel();
+  renderPanels();
 }
 
 function setConnectionStatus(status, kind) {
