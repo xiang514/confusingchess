@@ -74,6 +74,10 @@
           </div>
 
           <div class="actions board-actions" aria-label="对局操作">
+            <button id="declareCheckBtn" class="tool-button special declare" type="button" title="走子前声明将军" aria-label="将军">
+              <span aria-hidden="true">将</span>
+              <span>将军！</span>
+            </button>
             <button id="dongfengBtn" class="tool-button special" type="button" title="东风炮" aria-label="东风炮">
               <span aria-hidden="true">炮</span>
               <span>东风炮</span>
@@ -157,6 +161,16 @@
           </article>
 
           <article class="rules-card">
+            <h3>声明将军</h3>
+            <ul>
+              <li>玩家每次走子前都可以按“将军！”按钮声明。</li>
+              <li>声明后，对手屏幕会出现 0.5 秒“将军！！！”爆炸提示。</li>
+              <li>声明后下一步确实造成对方被将军时，无事发生。</li>
+              <li>声明后下一步没有造成将军，或实际造成将军却未声明，随机移除己方一枚棋子；将/帅和驭将/驭帅也在随机范围内。</li>
+            </ul>
+          </article>
+
+          <article class="rules-card">
             <h3>翻身上马</h3>
             <ul>
               <li>仅在己方被将军时可触发。</li>
@@ -207,9 +221,15 @@
       </section>
     </main>
 
+    <div id="checkExplosion" class="check-explosion" aria-hidden="true">
+      <div class="check-explosion-text">将军！！！</div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="presence-sync.js"></script>
     <script src="xiangqi-core.js"></script>
+    <script src="declare-check-core.js"></script>
     <script src="script.js"></script>
+    <script src="declare-check.js"></script>
   </body>
 </html>
