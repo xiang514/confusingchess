@@ -350,10 +350,6 @@
       text: `翻身上马 ${SYMBOLS[side].king} ${formatPoint(mountOption.king)} → ${formatPoint(validHorse)}`,
     });
 
-    if (isInCheck(nextGame, side)) {
-      return { ok: false, error: "上马后仍会被将军" };
-    }
-
     return finishTurn(nextGame, side, null);
   }
 
@@ -375,19 +371,9 @@
 
     nextGame.currentSide = oppositeSide(movingSide);
     const checked = isInCheck(nextGame, nextGame.currentSide);
-    const hasMove = hasAnyLegalMove(nextGame, nextGame.currentSide);
-
-    if (!hasMove) {
-      nextGame.gameOver = true;
-      nextGame.winner = movingSide;
-      nextGame.status = checked
-        ? `${SIDES[movingSide].player} 将死获胜`
-        : `${SIDES[nextGame.currentSide].label}无棋可走，${SIDES[movingSide].player}获胜`;
-    } else {
-      nextGame.status = checked
-        ? `${SIDES[nextGame.currentSide].player} · ${SIDES[nextGame.currentSide].label}被将军`
-        : `${SIDES[nextGame.currentSide].player}走棋`;
-    }
+    nextGame.status = checked
+      ? `${SIDES[nextGame.currentSide].player} · ${SIDES[nextGame.currentSide].label}被将军`
+      : `${SIDES[nextGame.currentSide].player}走棋`;
 
     return { ok: true, game: nextGame, captured };
   }
@@ -404,13 +390,7 @@
       return [];
     }
 
-    return getPlayerMoves(board, row, col).filter((move) => {
-      const nextBoard = createBoardAfterMove(board, row, col, move.row, move.col);
-      if (!nextBoard) {
-        return false;
-      }
-      return !isInCheck(game ? { ...game, board: nextBoard } : nextBoard, piece.side);
-    });
+    return getPlayerMoves(board, row, col);
   }
 
   function getPlayerMoves(board, row, col) {
@@ -670,11 +650,7 @@
         const target = board[nextRow][nextCol];
         if (target) {
           if (target.side !== piece.side) {
-            const nextBoard = createBoardAfterDongfengCapture(board, row, col, nextRow, nextCol);
-            const checkContext = game.board ? { ...game, board: nextBoard } : nextBoard;
-            if (!isInCheck(checkContext, piece.side)) {
-              moves.push({ row: nextRow, col: nextCol, capture: true, mode: "dongfeng" });
-            }
+            moves.push({ row: nextRow, col: nextCol, capture: true, mode: "dongfeng" });
           }
           break;
         }
@@ -685,23 +661,6 @@
     });
 
     return moves;
-  }
-
-  function createBoardAfterDongfengCapture(board, fromRow, fromCol, toRow, toCol) {
-    const nextBoard = cloneBoard(board);
-    const cannon = nextBoard[fromRow][fromCol];
-    const target = nextBoard[toRow][toCol];
-    const shouldRecoverHorse = shouldCaptureCavalryAsHorse(target, toRow, cannon);
-    const escapeHome = shouldRecoverHorse
-      ? null
-      : getCavalryEscapeHome(nextBoard, target, { row: toRow, col: toCol }, { row: fromRow, col: fromCol }, false);
-    const escapedHorse = escapeHome ? createEscapedHorse(target) : null;
-    nextBoard[fromRow][fromCol] = null;
-    nextBoard[toRow][toCol] = null;
-    if (escapedHorse) {
-      nextBoard[escapeHome.row][escapeHome.col] = escapedHorse;
-    }
-    return nextBoard;
   }
 
   function getSoldierMoves(board, row, col, side) {
@@ -745,13 +704,7 @@
           continue;
         }
 
-        const nextBoard = cloneBoard(board);
-        nextBoard[row][col] = { ...royal, type: "mountedKing", mountedHorseId: piece.id };
-        nextBoard[king.row][king.col] = null;
-        const checkContext = game.board ? { ...game, board: nextBoard } : nextBoard;
-        if (!isInCheck(checkContext, side)) {
-          options.push({ row, col, king: { ...king }, mode: "mount" });
-        }
+        options.push({ row, col, king: { ...king }, mode: "mount" });
       }
     }
 
@@ -767,58 +720,6 @@
         !board[row + blockRow][col + blockCol]
       );
     });
-  }
-
-  function createBoardAfterMove(board, fromRow, fromCol, toRow, toCol) {
-    const movingPiece = board[fromRow] && board[fromRow][fromCol];
-    if (!movingPiece) {
-      return null;
-    }
-
-    const target = board[toRow] && board[toRow][toCol];
-    const nextBoard = cloneBoard(board);
-    const moving = nextBoard[fromRow][fromCol];
-    const nextTarget = nextBoard[toRow][toCol];
-
-    if (moving.type === "horse" && nextTarget && nextTarget.side === moving.side && nextTarget.type === "soldier") {
-      nextBoard[toRow][toCol] = createCavalry(moving, nextTarget);
-      nextBoard[fromRow][fromCol] = null;
-      return nextBoard;
-    }
-
-    if (nextTarget && shouldCaptureCavalryAsHorse(nextTarget, toRow, moving)) {
-      nextBoard[toRow][toCol] = prepareMovedPiece(moving, toRow);
-      nextBoard[fromRow][fromCol] = null;
-      return nextBoard;
-    }
-
-    if (
-      nextTarget &&
-      shouldCavalryHorseEscape(
-        nextBoard,
-        nextTarget,
-        { row: toRow, col: toCol },
-        { row: fromRow, col: fromCol },
-        true,
-      )
-    ) {
-      const escapeHome = getCavalryEscapeHome(
-        nextBoard,
-        nextTarget,
-        { row: toRow, col: toCol },
-        { row: fromRow, col: fromCol },
-        true,
-      );
-      const escapedHorse = createEscapedHorse(nextTarget);
-      nextBoard[toRow][toCol] = prepareMovedPiece(moving, toRow);
-      nextBoard[fromRow][fromCol] = null;
-      nextBoard[escapeHome.row][escapeHome.col] = escapedHorse;
-      return nextBoard;
-    }
-
-    nextBoard[toRow][toCol] = prepareMovedPiece(moving, toRow);
-    nextBoard[fromRow][fromCol] = null;
-    return nextBoard;
   }
 
   function createCavalry(horse, soldier) {
