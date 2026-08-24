@@ -9,55 +9,53 @@
   <body>
     <main class="app-shell">
       <header class="topbar">
-        <div>
-          <p class="eyebrow">魔改象棋 · 线上双人对弈</p>
-          <h1>Confusing Chess</h1>
+        <p class="brand-mark">Confusingchess.fun</p>
+        <div class="title-line">
+          <h1>魔改象棋</h1>
+          <p class="tagline">线上双人对弈</p>
         </div>
       </header>
 
       <section class="connect-panel" aria-label="连接房间">
         <form id="connectForm" class="connect-form">
           <label>
-            <span>邮箱</span>
-            <input id="emailInput" name="email" type="email" autocomplete="email" placeholder="you@example.com" />
+            <span>登录名</span>
+            <input id="usernameInput" name="username" type="text" autocomplete="username" maxlength="16" placeholder="例如 xiangqi" />
           </label>
           <label>
             <span>登录密码</span>
             <input id="passwordInput" name="password" type="password" autocomplete="current-password" />
           </label>
           <label>
-            <span>昵称</span>
-            <input id="nameInput" name="name" type="text" autocomplete="nickname" maxlength="16" placeholder="我" />
-          </label>
-          <label>
             <span>房间</span>
             <input id="roomInput" name="room" type="text" autocomplete="off" maxlength="32" placeholder="home" />
           </label>
+          <div class="connection-state">
+            <span id="connectionBadge" class="connection-badge offline">未连接</span>
+            <span id="seatInfo">home · 本机对弈</span>
+          </div>
           <button id="signupBtn" class="tool-button" type="button" title="注册账号" aria-label="注册账号">
             <span aria-hidden="true">＋</span>
             <span>注册</span>
           </button>
-          <button id="connectBtn" class="tool-button primary" type="submit" title="连接" aria-label="连接">
+          <button id="connectBtn" class="tool-button primary" type="submit" title="登录账号" aria-label="登录账号">
             <span aria-hidden="true">⛓</span>
-            <span>进入</span>
+            <span>登录</span>
           </button>
-          <button id="disconnectBtn" class="tool-button" type="button" title="断开" aria-label="断开" disabled>
-            <span aria-hidden="true">⏏</span>
-            <span>退出</span>
-          </button>
-          <button id="copyLinkBtn" class="tool-button" type="button" title="复制房间链接" aria-label="复制房间链接">
-            <span aria-hidden="true">⧉</span>
-            <span>复制链接</span>
-          </button>
+          <button id="enterRoomBtn" class="tool-button primary" type="button" title="进入房间" aria-label="进入房间">进入</button>
+          <button id="disconnectBtn" class="tool-button" type="button" title="断开" aria-label="断开" disabled>退出</button>
         </form>
-        <div class="connection-state">
-          <span id="connectionBadge" class="connection-badge offline">未连接</span>
-          <span id="seatInfo">home · 本机对弈</span>
-        </div>
       </section>
 
       <section class="game-layout" aria-label="中国象棋棋局">
         <div class="board-area">
+          <div id="board" class="board" role="application" aria-label="中国象棋棋盘">
+            <canvas id="boardCanvas" aria-hidden="true"></canvas>
+            <div id="boardGrid" class="board-grid"></div>
+          </div>
+        </div>
+
+        <aside class="side-panel" aria-label="对局信息">
           <div class="players" aria-label="双方状态">
             <div id="redPlayer" class="player red-player">
               <span class="side-dot red-dot" aria-hidden="true"></span>
@@ -94,13 +92,6 @@
             </button>
           </div>
 
-          <div id="board" class="board" role="application" aria-label="中国象棋棋盘">
-            <canvas id="boardCanvas" aria-hidden="true"></canvas>
-            <div id="boardGrid" class="board-grid"></div>
-          </div>
-        </div>
-
-        <aside class="side-panel" aria-label="对局信息">
           <section class="status-panel">
             <p class="panel-label">当前回合</p>
             <h2 id="turnTitle">玩家1 · 红方</h2>
