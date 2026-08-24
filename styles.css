@@ -620,6 +620,72 @@ h1 {
   font-weight: 700;
 }
 
+.rules-panel {
+  width: 100%;
+  margin-top: 22px;
+  padding: 18px;
+  border: 1px solid rgba(216, 204, 192, 0.9);
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.62);
+  box-shadow: 0 7px 16px rgba(45, 31, 20, 0.05);
+}
+
+.rules-heading {
+  max-width: 760px;
+  margin-bottom: 16px;
+}
+
+.rules-heading h2 {
+  margin: 5px 0 8px;
+  color: #16110f;
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.rules-heading p:last-child {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.96rem;
+  line-height: 1.7;
+}
+
+.rules-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rules-card {
+  min-width: 0;
+  padding: 14px 15px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.88);
+}
+
+.rules-card h3 {
+  margin: 0 0 8px;
+  color: #2a211d;
+  font-size: 1rem;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+
+.rules-card ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 1.2em;
+  color: #43372f;
+  font-size: 0.92rem;
+  line-height: 1.58;
+}
+
+.rules-card li::marker {
+  color: var(--red);
+}
+
 @media (max-width: 920px) {
   body {
     display: block;
@@ -674,6 +740,10 @@ h1 {
   .move-log {
     max-height: 250px;
   }
+
+  .rules-panel {
+    margin-top: 16px;
+  }
 }
 
 @media (max-width: 700px) {
@@ -720,5 +790,17 @@ h1 {
 
   .player {
     padding: 10px 12px;
+  }
+
+  .rules-panel {
+    padding: 14px;
+  }
+
+  .rules-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .rules-card {
+    padding: 13px 14px;
   }
 }
