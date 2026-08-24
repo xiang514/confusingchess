@@ -2,6 +2,7 @@
 
 const SUPABASE_URL = "https://ikuqyslgfbabixyitzws.supabase.co";
 const SUPABASE_KEY = "sb_publishable_6SYKOcW0fzIKUEMomMJ5iw_NtVm-GaY";
+const USERNAME_AUTH_DOMAIN = "users.confusingchess.fun";
 
 const Core = window.XiangqiCore;
 const {
@@ -31,8 +32,7 @@ const supabaseClient = window.supabase
 
 const STORAGE_KEYS = {
   roomId: "xiangqi.roomId",
-  name: "xiangqi.name",
-  email: "xiangqi.email",
+  username: "xiangqi.username",
 };
 
 const elements = {
@@ -58,13 +58,12 @@ const elements = {
   mountBtn: document.getElementById("mountBtn"),
   connectForm: document.getElementById("connectForm"),
   signupBtn: document.getElementById("signupBtn"),
-  nameInput: document.getElementById("nameInput"),
-  emailInput: document.getElementById("emailInput"),
+  usernameInput: document.getElementById("usernameInput"),
   passwordInput: document.getElementById("passwordInput"),
   roomInput: document.getElementById("roomInput"),
   connectBtn: document.getElementById("connectBtn"),
+  enterRoomBtn: document.getElementById("enterRoomBtn"),
   disconnectBtn: document.getElementById("disconnectBtn"),
-  copyLinkBtn: document.getElementById("copyLinkBtn"),
   connectionBadge: document.getElementById("connectionBadge"),
   seatInfo: document.getElementById("seatInfo"),
 };
@@ -103,20 +102,18 @@ render();
 function initConnectionForm() {
   const params = new URLSearchParams(window.location.search);
   const roomId = params.get("room") || localStorage.getItem(STORAGE_KEYS.roomId) || "home";
-  const name = localStorage.getItem(STORAGE_KEYS.name) || "";
-  const email = localStorage.getItem(STORAGE_KEYS.email) || "";
+  const username = localStorage.getItem(STORAGE_KEYS.username) || "";
 
   elements.roomInput.value = roomId;
-  elements.nameInput.value = name;
-  elements.emailInput.value = email;
+  elements.usernameInput.value = username;
   state.connection.roomId = roomId;
 }
 
 function bindEvents() {
   elements.connectForm.addEventListener("submit", connectOnline);
   elements.signupBtn.addEventListener("click", registerAccount);
+  elements.enterRoomBtn.addEventListener("click", connectOnline);
   elements.disconnectBtn.addEventListener("click", disconnectOnline);
-  elements.copyLinkBtn.addEventListener("click", copyInviteLink);
   elements.dongfengBtn.addEventListener("click", toggleDongfengMode);
   elements.mountBtn.addEventListener("click", toggleMountMode);
   elements.resetBtn.addEventListener("click", resetGame);
@@ -371,6 +368,7 @@ function renderConnectionPanel() {
 
   elements.signupBtn.disabled = connection.busy || connection.connected;
   elements.connectBtn.disabled = connection.busy || (connection.connected && connection.statusKind === "online");
+  elements.enterRoomBtn.disabled = connection.busy || (connection.connected && connection.statusKind === "online");
   elements.disconnectBtn.disabled = connection.busy || (!connection.connected && !connection.userId);
 }
 
@@ -770,13 +768,15 @@ async function resetGame() {
 }
 
 async function connectOnline(event) {
-  event.preventDefault();
+  if (event) {
+    event.preventDefault();
+  }
   if (!supabaseClient) {
     setConnectionStatus("联机组件未加载", "error");
     return;
   }
 
-  const authValues = getAuthValues();
+  const authValues = await getAuthValues();
   if (!authValues) {
     return;
   }
@@ -796,7 +796,7 @@ async function connectOnline(event) {
     persistForm(authValues);
     await enterRoom(authValues);
   } catch (error) {
-    handleOnlineError(error, "登录失败，请检查邮箱和密码");
+    handleOnlineError(error, "登录失败，请检查登录名和密码");
   } finally {
     setBusy(false);
   }
@@ -808,7 +808,7 @@ async function registerAccount() {
     return;
   }
 
-  const authValues = getAuthValues();
+  const authValues = await getAuthValues();
   if (!authValues) {
     return;
   }
@@ -821,6 +821,7 @@ async function registerAccount() {
       password: authValues.password,
       options: {
         data: {
+          username: authValues.username,
           display_name: authValues.name,
         },
       },
@@ -836,8 +837,8 @@ async function registerAccount() {
       return;
     }
 
-    state.notice = "注册成功，请先去邮箱确认账号，再回来点击进入";
-    setConnectionStatus("等待邮箱确认", "pending");
+    state.notice = "注册成功，但后台仍要求账号确认；请在 Supabase 关闭邮箱确认后重新注册或手动确认账号";
+    setConnectionStatus("等待账号确认", "pending");
     render();
   } catch (error) {
     handleOnlineError(error, "注册失败");
@@ -1065,15 +1066,14 @@ function summarizeMember(member) {
   };
 }
 
-function getAuthValues() {
-  const email = elements.emailInput.value.trim();
+async function getAuthValues() {
+  const username = cleanUsername(elements.usernameInput.value);
   const password = elements.passwordInput.value;
-  const name = elements.nameInput.value.trim().slice(0, 16) || "棋友";
   const roomId = cleanRoomId(elements.roomInput.value);
 
-  if (!email || !email.includes("@")) {
-    state.notice = "请填写邮箱";
-    setConnectionStatus("缺少邮箱", "error");
+  if (username.length < 2) {
+    state.notice = "登录名至少 2 个字符";
+    setConnectionStatus("缺少登录名", "error");
     render();
     return null;
   }
@@ -1085,14 +1085,55 @@ function getAuthValues() {
     return null;
   }
 
-  return { email, password, name, roomId };
+  const email = await usernameToInternalEmail(username);
+  return { username, email, password, name: username, roomId };
 }
 
 function persistForm(values) {
   localStorage.setItem(STORAGE_KEYS.roomId, values.roomId);
-  localStorage.setItem(STORAGE_KEYS.name, values.name);
-  localStorage.setItem(STORAGE_KEYS.email, values.email);
+  localStorage.setItem(STORAGE_KEYS.username, values.username);
   state.connection.roomId = values.roomId;
+}
+
+function cleanUsername(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/g, "")
+    .slice(0, 16);
+}
+
+async function usernameToInternalEmail(username) {
+  const normalized = username.normalize("NFKC").toLowerCase();
+  const digest = await sha256Hex(normalized);
+  return `u_${digest.slice(0, 32)}@${USERNAME_AUTH_DOMAIN}`;
+}
+
+async function sha256Hex(value) {
+  const bytes = new TextEncoder().encode(value);
+  if (window.crypto && window.crypto.subtle) {
+    const buffer = await window.crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(buffer), byteToHex).join("");
+  }
+
+  return fallbackHashHex(value);
+}
+
+function byteToHex(byte) {
+  return byte.toString(16).padStart(2, "0");
+}
+
+function fallbackHashHex(value) {
+  let hashA = 0x811c9dc5;
+  let hashB = 0x01000193;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    hashA ^= code;
+    hashA = Math.imul(hashA, 0x01000193) >>> 0;
+    hashB ^= code + index;
+    hashB = Math.imul(hashB, 0x85ebca6b) >>> 0;
+  }
+  return `${hashA.toString(16).padStart(8, "0")}${hashB.toString(16).padStart(8, "0")}`;
 }
 
 function handleOnlineError(error, fallbackMessage) {
@@ -1106,11 +1147,11 @@ function getErrorMessage(error, fallbackMessage) {
   const rawMessage = String((error && error.message) || fallbackMessage || "操作失败");
 
   if (rawMessage.includes("Invalid login credentials")) {
-    return "登录失败，请检查邮箱和密码；还没有账号请先注册";
+    return "登录失败，请检查登录名和密码；还没有账号请先注册";
   }
 
   if (rawMessage.includes("Email not confirmed")) {
-    return "邮箱还没有确认，请先打开验证邮件";
+    return "账号还没有完成确认；请在 Supabase 关闭邮箱确认后重新注册，或在后台手动确认账号";
   }
 
   if (rawMessage.includes("room_full")) {
@@ -1130,20 +1171,6 @@ function getErrorMessage(error, fallbackMessage) {
   }
 
   return rawMessage || fallbackMessage;
-}
-
-async function copyInviteLink() {
-  const roomId = cleanRoomId(elements.roomInput.value);
-  const inviteUrl = new URL(window.location.href);
-  inviteUrl.searchParams.set("room", roomId);
-
-  try {
-    await navigator.clipboard.writeText(inviteUrl.toString());
-    state.notice = "房间链接已复制";
-  } catch {
-    state.notice = inviteUrl.toString();
-  }
-  renderPanels();
 }
 
 function firstRow(data) {
