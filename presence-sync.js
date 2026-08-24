@@ -255,7 +255,39 @@
     return Array.isArray(data) ? data[0] : data;
   }
 
+  function hookGlobalFunctions() {
+    wrapGlobal("applyRemoteRoom", (args) => {
+      const room = args[0];
+      rememberPresence(room && room.id, room && room.game_state);
+      window.setTimeout(paintPresence, 0);
+    });
+    wrapGlobal("render", () => window.setTimeout(paintPresence, 0));
+    wrapGlobal("renderPanels", () => window.setTimeout(paintPresence, 0));
+    wrapGlobal("refreshMembers", (_args, result) => {
+      Promise.resolve(result).finally(() => window.setTimeout(paintPresence, 0));
+    });
+  }
+
+  function wrapGlobal(name, after) {
+    const original = window[name];
+    if (typeof original !== "function" || original.__presenceWrapped) {
+      return;
+    }
+
+    const wrapped = function wrappedPresenceFunction(...args) {
+      const result = original.apply(this, args);
+      after(args, result);
+      return result;
+    };
+    Object.defineProperty(wrapped, "__presenceWrapped", {
+      value: true,
+      enumerable: false,
+    });
+    window[name] = wrapped;
+  }
+
   window.addEventListener("load", () => {
+    hookGlobalFunctions();
     const observer = new MutationObserver(() => window.setTimeout(paintPresence, 0));
     ["redMeta", "blackMeta", "seatInfo", "connectionBadge"].forEach((id) => {
       const element = document.getElementById(id);
@@ -265,4 +297,6 @@
     });
     paintPresence();
   });
+
+  window.setTimeout(hookGlobalFunctions, 0);
 })();
