@@ -35,7 +35,7 @@
     const moves = getLegalMovesForPiece(gameOrBoard, row, col);
     const board = Array.isArray(gameOrBoard) ? gameOrBoard : gameOrBoard.board;
     const piece = board[row] && board[row][col];
-    if (!piece || piece.type !== "cavalry" || !isAcrossRiver(piece.side, row)) {
+    if (!piece || piece.type !== "cavalry") {
       return moves;
     }
 
@@ -227,7 +227,7 @@
       return false;
     }
 
-    if (context.piece.side !== game.currentSide || !isAcrossRiver(context.piece.side, context.from.row)) {
+    if (context.piece.side !== game.currentSide) {
       return false;
     }
 
@@ -241,7 +241,7 @@
     const validTo = normalizePoint(to);
     const piece = nextGame.board[validFrom.row][validFrom.col];
     const target = nextGame.board[validTo.row][validTo.col];
-    const returningHome = staysOnOwnSide(piece.side, validTo.row);
+    const returningHome = isAcrossRiver(piece.side, validFrom.row) && staysOnOwnSide(piece.side, validTo.row);
     const captured = target || null;
 
     nextGame.board[validFrom.row][validFrom.col] = null;
@@ -261,7 +261,7 @@
       text += `，退回己方半场，兵受军法处置，马${retreatPoint ? `随机回到 ${formatPoint(retreatPoint)}` : "暂无非九宫空位落子"}`;
     } else {
       nextGame.board[validTo.row][validTo.col] = movedPiece;
-      text += "，过河骑兵后退";
+      text += isBackwardMove(piece.side, validFrom.row, validTo.row) ? "，骑兵后退" : "，骑兵移动";
     }
 
     nextGame.lastMove = {
@@ -653,6 +653,10 @@
 
   function staysOnOwnSide(side, row) {
     return side === "red" ? row >= 5 : row <= 4;
+  }
+
+  function isBackwardMove(side, fromRow, toRow) {
+    return side === "red" ? toRow > fromRow : toRow < fromRow;
   }
 
   function isAcrossRiver(side, row) {
