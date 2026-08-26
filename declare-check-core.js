@@ -16,7 +16,7 @@
     applyHorseMount,
     getLegalMovesForPiece,
     cloneGame,
-    isInCheck,
+    isInCheck: baseIsInCheck,
     areRoyalsFacing,
     formatPoint,
     oppositeSide,
@@ -49,6 +49,8 @@
     });
     return moves;
   };
+
+  Core.isInCheck = patchedIsInCheck;
 
   Core.declareCheck = function declareCheck(game, side = game.currentSide) {
     const nextGame = Core.cloneGame(game);
@@ -315,7 +317,7 @@
       return result;
     }
 
-    const causedCheck = isInCheck(game, oppositeSide(movingSide));
+    const causedCheck = patchedIsInCheck(game, oppositeSide(movingSide));
     if (declared === causedCheck) {
       refreshStatus(game, movingSide);
       return result;
@@ -358,8 +360,40 @@
       return;
     }
 
-    const checked = isInCheck(game, game.currentSide);
+    const checked = patchedIsInCheck(game, game.currentSide);
     game.status = checked ? `${SIDES[game.currentSide].player} · ${SIDES[game.currentSide].label}被将军` : `${SIDES[game.currentSide].player}走棋`;
+  }
+
+  function patchedIsInCheck(gameOrBoard, side) {
+    if (baseIsInCheck(gameOrBoard, side)) {
+      return true;
+    }
+
+    const board = Array.isArray(gameOrBoard) ? gameOrBoard : gameOrBoard && gameOrBoard.board;
+    if (!board) {
+      return false;
+    }
+
+    const royal = findRoyal(board, side);
+    if (!royal) {
+      return true;
+    }
+
+    const enemySide = oppositeSide(side);
+    for (let row = 0; row < ROWS; row += 1) {
+      for (let col = 0; col < COLS; col += 1) {
+        const piece = board[row] && board[row][col];
+        if (!piece || piece.side !== enemySide || piece.type !== "cavalry") {
+          continue;
+        }
+
+        if (getFreeCavalryMoves(board, row, col, enemySide).some((move) => move.row === royal.row && move.col === royal.col)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   function ensureRuleFields(game, source = {}) {
@@ -406,6 +440,18 @@
 
   function isRoyal(piece) {
     return piece && (piece.type === "king" || piece.type === "mountedKing");
+  }
+
+  function findRoyal(board, side) {
+    for (let row = 0; row < ROWS; row += 1) {
+      for (let col = 0; col < COLS; col += 1) {
+        const piece = board[row] && board[row][col];
+        if (piece && piece.side === side && isRoyal(piece)) {
+          return { row, col };
+        }
+      }
+    }
+    return null;
   }
 
   function getFreeCavalryMoves(board, row, col, side) {
